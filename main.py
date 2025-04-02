@@ -22,9 +22,9 @@ def translate(text, target_lang):
     except Exception as e:
         return f"Error: {e}"
 
-@app.route('/callback', methods=['POST'])  # ✅ LINE 发送 POST 请求到 /callback
+@app.route('/', methods=['POST'])
 def webhook():
-    return 'OK', 200  # ✅ LINE 必须收到 200，否则报错
+    return 'OK', 200
 
 @app.route('/translate')
 def do_translation():
@@ -32,4 +32,4 @@ def do_translation():
     return result
 
 if __name__ == '__main__':
-    app.run()
+    app.run(host='0.0.0.0', port=10000)
