@@ -1,12 +1,10 @@
 from flask import Flask, request
 import requests
-import json
 import os
 
 app = Flask(__name__)
 
-# 你的 LINE Access Token
-LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
+LINE_ACCESS_TOKEN = "你的Access Token"  # 🔁 请替换为你自己的 Token
 
 def translate(text, target_lang):
     url = "https://libretranslate.de/translate"
@@ -19,58 +17,51 @@ def translate(text, target_lang):
     headers = {
         "Content-Type": "application/json"
     }
-
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=5)
         response.raise_for_status()
-        return response.json().get("translatedText", "翻譯失敗")
+        return response.json().get("translatedText", "翻译失败")
     except Exception as e:
-        return f"錯誤：{e}"
+        return f"Error: {e}"
 
-@app.route("/callback", methods=["POST"])
-def webhook():
-    body = request.get_json()
-    print("接收到的內容：", json.dumps(body, ensure_ascii=False))
-
-    try:
-        event = body["events"][0]
-        user_text = event["message"]["text"]
-        reply_token = event["replyToken"]
-
-        # 判斷目標語言（範例：中翻日、英翻中）
-        if all(ord(c) < 128 for c in user_text):  # 英文 ➜ 中文
-            target_lang = "zh"
-        elif '\u4e00' <= user_text <= '\u9fff':  # 中文 ➜ 日文
-            target_lang = "ja"
-        else:
-            target_lang = "en"  # 其他預設翻英文
-
-        translated = translate(user_text, target_lang)
-
-        reply_message(reply_token, translated)
-    except Exception as e:
-        print("錯誤：", e)
-
-    return "OK", 200
-
-def reply_message(token, text):
+def reply_to_line(reply_token, message):
+    url = "https://api.line.me/v2/bot/message/reply"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"
     }
-
     payload = {
-        "replyToken": token,
-        "messages": [{
-            "type": "text",
-            "text": text
-        }]
+        "replyToken": reply_token,
+        "messages": [
+            {
+                "type": "text",
+                "text": message
+            }
+        ]
     }
+    requests.post(url, headers=headers, json=payload)
 
-    url = "https://api.line.me/v2/bot/message/reply"
-    res = requests.post(url, headers=headers, json=payload)
-    print("LINE 回傳結果：", res.status_code, res.text)
+@app.route("/callback", methods=["POST"])
+def callback():
+    data = request.get_json()
+    event = data["events"][0]
+    user_message = event["message"]["text"]
+    reply_token = event["replyToken"]
+
+    # 判断翻译目标语言（简单判断）
+    if "英文" in user_message:
+        target_lang = "en"
+        source_text = user_message.replace("翻译成英文：", "").strip()
+    elif "日文" in user_message or "日語" in user_message:
+        target_lang = "ja"
+        source_text = user_message.replace("翻译成日文：", "").replace("翻译成日語：", "").strip()
+    else:
+        reply_to_line(reply_token, "请注明翻译目标语言，例如：翻译成英文：你好")
+        return "OK", 200
+
+    translated = translate(source_text, target_lang)
+    reply_to_line(reply_token, translated)
+    return "OK", 200
 
 if __name__ == '__main__':
-    print("✅ Flask server is starting...")
     app.run(host='0.0.0.0', port=10000)
