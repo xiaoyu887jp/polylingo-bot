@@ -29,9 +29,9 @@ def webhook():
     return 'OK', 200
 
 @app.route('/')
-def index():
-    return "🚀 Polylingo bot is running!", 200
+def home():
+    return "🚀 翻译 Bot 正在运行！", 200
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))  # ✅ 允许 Render 自动设定端口
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
