@@ -26,7 +26,7 @@ def translate(text, target_lang):
 def home():
     return 'Welcome to Polylingo Bot!'
 
-@app.route('/translate')
+@app.route('/translate', methods=['POST'])
 def do_translation():
     result = translate("Hello", "ja")
     return jsonify({"translated": result})
