@@ -1,5 +1,6 @@
 from flask import Flask, request
 import requests
+import os
 
 app = Flask(__name__)
 
@@ -22,15 +23,15 @@ def translate(text, target_lang):
     except Exception as e:
         return f"Error: {e}"
 
-@app.route('/callback', methods=['POST'])  # LINE 用这个路径来 POST
+@app.route('/callback', methods=['POST'])
 def webhook():
-    return 'OK', 200  # 一定要返回 200，LINE 才会判定成功
+    print("✅ 收到 LINE POST 请求")
+    return 'OK', 200
 
-@app.route('/translate')  # 测试用，不给 LINE 用
-def do_translation():
-    result = translate("Hello", "ja")
-    return result
+@app.route('/')
+def index():
+    return "🚀 Polylingo bot is running!", 200
 
 if __name__ == '__main__':
-    print("✅ Flask server is starting...")
-    app.run(host='0.0.0.0', port=10000)  # 一定是 0.0.0.0，不是 localhost
+    port = int(os.environ.get("PORT", 10000))  # ✅ 允许 Render 自动设定端口
+    app.run(host='0.0.0.0', port=port)
