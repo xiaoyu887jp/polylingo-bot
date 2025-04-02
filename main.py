@@ -2,11 +2,15 @@
 def callback():
     data = request.get_json()
 
-    # 如果 events 不存在或为空，就直接返回 200，不做处理
+    # 防止 LINE 发送空数据或非消息事件时出错
     if "events" not in data or len(data["events"]) == 0:
-        return "No event", 200
+        return "No events", 200
 
     event = data["events"][0]
+
+    if "message" not in event or "text" not in event["message"]:
+        return "No message content", 200
+
     user_message = event["message"]["text"]
     reply_token = event["replyToken"]
 
