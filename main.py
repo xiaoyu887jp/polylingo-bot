@@ -22,14 +22,14 @@ def translate(text, target_lang):
     except Exception as e:
         return f"Error: {e}"
 
-@app.route('/')
-def home():
-    return 'Welcome to Polylingo Bot!'
+@app.route('/', methods=['POST'])  # 👈 加上 POST 方法
+def webhook():
+    return 'OK', 200  # ✅ 一定要回傳 200 給 LINE
 
-@app.route('/translate', methods=['POST'])
+@app.route('/translate')
 def do_translation():
     result = translate("Hello", "ja")
-    return jsonify({"translated": result})
+    return result
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+    app.run()
