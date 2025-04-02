@@ -1,11 +1,11 @@
 from flask import Flask, request
 import requests
-import os
+import json
 
 app = Flask(__name__)
 
-# 你的 LINE Channel Access Token（从 LINE Developers 后台复制）
-LINE_ACCESS_TOKEN = '你的 Access Token 填在这里'
+LINE_ACCESS_TOKEN = '你的Access Token'  # 替换为你的 token
+LINE_REPLY_ENDPOINT = 'https://api.line.me/v2/bot/message/reply'
 
 def translate(text, target_lang):
     url = "https://libretranslate.de/translate"
@@ -15,7 +15,9 @@ def translate(text, target_lang):
         "target": target_lang,
         "format": "text"
     }
-    headers = { "Content-Type": "application/json" }
+    headers = {
+        "Content-Type": "application/json"
+    }
 
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=5)
@@ -26,30 +28,29 @@ def translate(text, target_lang):
 
 @app.route("/callback", methods=["POST"])
 def callback():
-    body = request.json
+    body = request.get_json()
+    print("Received body:", body)
+
     for event in body.get("events", []):
-        if event["type"] == "message" and event["message"]["type"] == "text":
+        if event.get("type") == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"]
             reply_token = event["replyToken"]
+            translated_text = translate(user_text, "en")  # 翻译成英文
 
-            translated_text = translate(user_text, "en")  # 翻译成英文，可改 "ja"、"zh"、"th" 等
-            reply_to_line(reply_token, translated_text)
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"
+            }
+            payload = {
+                "replyToken": reply_token,
+                "messages": [
+                    {"type": "text", "text": translated_text}
+                ]
+            }
+            requests.post(LINE_REPLY_ENDPOINT, headers=headers, data=json.dumps(payload))
+
     return "OK", 200
 
-def reply_to_line(reply_token, text):
-    url = "https://api.line.me/v2/bot/message/reply"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"
-    }
-    payload = {
-        "replyToken": reply_token,
-        "messages": [{
-            "type": "text",
-            "text": text
-        }]
-    }
-    requests.post(url, headers=headers, json=payload)
-
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    print("✅ Server is running...")
+    app.run(host='0.0.0.0', port=10000)
