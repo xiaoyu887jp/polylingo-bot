@@ -3,10 +3,10 @@ import requests
 
 app = Flask(__name__)
 
-# 你的 LINE Messaging API 的 Token
-LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
+# ✅ 你的 LINE Access Token
+LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0BTlVpuAdB04t89/1O/w1cDnyilFU="
 
-# 你的 Google Translate API 密钥
+# ✅ 你的 Google API Key
 GOOGLE_API_KEY = "AIzaSyCz75hkAR3okY0sTX6HYOHH9r1a0S9Cy0Q"
 
 def translate(text, target_lang):
@@ -16,8 +16,11 @@ def translate(text, target_lang):
         "target": target_lang,
         "format": "text"
     }
+    headers = {
+        "Content-Type": "application/json"
+    }
     try:
-        response = requests.post(url, json=payload, timeout=5)
+        response = requests.post(url, json=payload, headers=headers, timeout=5)
         response.raise_for_status()
         return response.json()["data"]["translations"][0]["translatedText"]
     except Exception as e:
@@ -43,33 +46,30 @@ def reply_to_line(reply_token, message):
 @app.route("/callback", methods=["POST"])
 def callback():
     data = request.get_json()
-
-    # 安全检查：无 events
-    if not data.get("events"):
+    events = data.get("events", [])
+    if not events:
         return "OK", 200
 
-    event = data["events"][0]
-
-    # 忽略非文本消息
-    if event["type"] != "message" or event["message"]["type"] != "text":
-        return "OK", 200
-
-    user_message = event["message"]["text"].strip()
+    event = events[0]
+    user_message = event["message"]["text"]
     reply_token = event["replyToken"]
 
-    # 简单语言判断
-    if user_message.startswith("翻译成英文："):
+    # 🌐 判断语言并提取翻译内容
+    if "翻译成英文：" in user_message:
         target_lang = "en"
-        text = user_message.replace("翻译成英文：", "").strip()
-    elif user_message.startswith("翻译成日文：") or user_message.startswith("翻译成日語："):
+        source_text = user_message.replace("翻译成英文：", "").strip()
+    elif "翻译成日文：" in user_message or "翻译成日語：" in user_message:
         target_lang = "ja"
-        text = user_message.replace("翻译成日文：", "").replace("翻译成日語：", "").strip()
+        source_text = user_message.replace("翻译成日文：", "").replace("翻译成日語：", "").strip()
+    elif "翻译成中文：" in user_message or "翻译成中文（简体）：" in user_message:
+        target_lang = "zh-CN"
+        source_text = user_message.replace("翻译成中文：", "").replace("翻译成中文（简体）：", "").strip()
     else:
-        reply_to_line(reply_token, "请使用格式：翻译成英文：你好")
+        reply_to_line(reply_token, "请输入类似格式：翻译成英文：你好 / 翻译成日文：谢谢")
         return "OK", 200
 
-    result = translate(text, target_lang)
-    reply_to_line(reply_token, result)
+    translated = translate(source_text, target_lang)
+    reply_to_line(reply_token, translated)
     return "OK", 200
 
 if __name__ == '__main__':
