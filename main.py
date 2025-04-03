@@ -1,5 +1,6 @@
 from flask import Flask, request
 import requests
+import re
 
 app = Flask(__name__)
 
@@ -46,6 +47,11 @@ def reply_to_line(reply_token, message):
     }
     requests.post(url, headers=headers, json=payload)
 
+def clean_lang_input(raw):
+    # 替换各种奇怪的输入字符为英文逗号，并去除全角空格、奇怪空格
+    raw = raw.replace("，", ",").replace("、", ",").replace("　", "").replace("\u3000", "").replace(" ", "")
+    return [l for l in raw.split(",") if l in lang_alias]
+
 @app.route("/callback", methods=["POST"])
 def callback():
     data = request.get_json()
@@ -54,15 +60,17 @@ def callback():
     user_id = event["source"].get("userId", "unknown")
     msg = event["message"].get("text", "").strip()
 
-    # ✅ 修复后的识别逻辑
+    # ✅ 智能识别 “to xxx,xxx 内容”
     if msg.lower().startswith("to "):
         try:
-            parts = msg[3:].strip().split(" ", 1)
-            lang_part = parts[0].replace("，", ",")
+            stripped = msg[3:].strip()
+            parts = re.split(r"\s+", stripped, maxsplit=1)
+            lang_part = parts[0]
             content = parts[1] if len(parts) > 1 else ""
 
-            langs = [l.strip() for l in lang_part.split(",") if l.strip() in lang_alias]
+            langs = clean_lang_input(lang_part)
             lang_codes = [(l, lang_alias[l]) for l in langs]
+
             if lang_codes:
                 user_lang_prefs[user_id] = lang_codes
                 if not content:
@@ -75,10 +83,10 @@ def callback():
                     reply_to_line(reply_token, result.strip())
                 return "OK", 200
         except:
-            reply_to_line(reply_token, "⚠️ 设定失败，请检查格式")
+            reply_to_line(reply_token, "⚠️ 指令格式错误，请使用 to 英文,泰文 内容")
             return "OK", 200
 
-    # ✅ 已设定过，直接翻译
+    # ✅ 如果已设定语言，自动翻译
     if user_id in user_lang_prefs:
         lang_codes = user_lang_prefs[user_id]
         result = ""
