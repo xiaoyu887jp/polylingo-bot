@@ -4,8 +4,8 @@ from flask import Flask, request
 
 app = Flask(__name__)
 
-LINE_ACCESS_TOKEN = "你自己的 LINE TOKEN"
-GOOGLE_API_KEY = "你自己的 Google API Key"
+LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
+GOOGLE_API_KEY = "AIzaSyCz75hkAR3okY0sTX6HYOHH9r1a0S9Cy0Q"
 
 def translate(text, target_lang):
     url = f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}"
