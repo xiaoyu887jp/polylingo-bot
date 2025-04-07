@@ -26,7 +26,7 @@ def translate(text, target_lang):
         res.raise_for_status()
         return res.json()["data"]["translations"][0]["translatedText"]
     except Exception as e:
-        return f"[翻译失败]: {e}"
+        return f"[Translation Failed]: {e}"
 
 def reply_to_line(reply_token, message):
     url = "https://api.line.me/v2/bot/message/reply"
@@ -54,25 +54,23 @@ def callback():
 
     # 识别语言
     source_lang = detect_language(user_text)
-
     if not source_lang:
-        reply_to_line(reply_token, "识别语言失败")
-        return "OK", 200
+        return "OK", 200  # ❌ 不再发送提示
 
-    # 中文 → 翻译成 英文 + 泰文
+    # 中文 → 英文 + 泰文
     if source_lang == "zh-CN":
         en = translate(user_text, "en")
         th = translate(user_text, "th")
         reply = f"[EN] {en}\n[TH] {th}"
 
-    # 泰文 → 翻译成 中文 + 英文
+    # 泰文 → 中文 + 英文
     elif source_lang == "th":
         zh = translate(user_text, "zh-CN")
         en = translate(user_text, "en")
         reply = f"[中文] {zh}\n[EN] {en}"
 
     else:
-        reply = "目前仅支持中文与泰文自动翻译"
+        return "OK", 200  # ❌ 其他语言不回复任何提示
 
     reply_to_line(reply_token, reply)
     return "OK", 200
