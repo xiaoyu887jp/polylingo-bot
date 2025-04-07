@@ -1,3 +1,9 @@
+# 为用户打包完整可运行项目，包括 main.py 和 requirements.txt
+
+from zipfile import ZipFile
+
+project_files = {
+    "main.py": """
 from flask import Flask, request
 import requests
 from googletrans import Translator
@@ -32,12 +38,12 @@ def callback():
     if detected_lang == "zh-cn":
         th = translator.translate(text, dest="th").text
         en = translator.translate(text, dest="en").text
-        reply = f"原文：{text}\n\n[TH] {th}\n\n[EN] {en}"
+        reply = f"原文：{text}\\n\\n[TH] {th}\\n\\n[EN] {en}"
 
     elif detected_lang == "th":
         zh = translator.translate(text, dest="zh-cn").text
         en = translator.translate(text, dest="en").text
-        reply = f"原文：{text}\n\n[ZH] {zh}\n\n[EN] {en}"
+        reply = f"原文：{text}\\n\\n[ZH] {zh}\\n\\n[EN] {en}"
 
     else:
         reply = "目前仅支持中文和泰文自动识别哦。"
@@ -47,3 +53,21 @@ def callback():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
+""",
+    "requirements.txt": """
+Flask
+requests
+googletrans==4.0.0-rc1
+"""
+}
+
+zip_path = "/mnt/data/saygo_bot_project.zip"
+
+with ZipFile(zip_path, 'w') as zipf:
+    for filename, content in project_files.items():
+        file_path = f"/mnt/data/{filename}"
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content.strip())
+        zipf.write(file_path, arcname=filename)
+
+zip_path
