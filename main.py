@@ -1,34 +1,79 @@
-from flask import Flask, request, jsonify
-from google.cloud import translate_v2 as translate
-import os
+from flask import Flask, request
+import requests
 
 app = Flask(__name__)
 
-# 设置你的密钥文件路径，或者用环境变量 GOOGLE_APPLICATION_CREDENTIALS
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "my-key.json"
+# ✅ 请将以下两项替换为你自己的密钥
+LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
+GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
-# 初始化翻译客户端
-translate_client = translate.Client()
+def detect_language(text):
+    url = f"https://translation.googleapis.com/language/translate/v2/detect?key={GOOGLE_API_KEY}"
+    payload = {"q": text}
+    headers = {"Content-Type": "application/json"}
+    try:
+        res = requests.post(url, json=payload, headers=headers, timeout=5)
+        res.raise_for_status()
+        return res.json()["data"]["detections"][0][0]["language"]
+    except Exception as e:
+        return None
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.json
-    user_message = data["events"][0]["message"]["text"]
+def translate(text, target_lang):
+    url = f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}"
+    payload = {"q": text, "target": target_lang, "format": "text"}
+    headers = {"Content-Type": "application/json"}
+    try:
+        res = requests.post(url, json=payload, headers=headers, timeout=5)
+        res.raise_for_status()
+        return res.json()["data"]["translations"][0]["translatedText"]
+    except Exception as e:
+        return f"[Translation Failed]: {e}"
 
-    # 翻译为泰文和英文
-    result_th = translate_client.translate(user_message, target_language='th')["translatedText"]
-    result_en = translate_client.translate(user_message, target_language='en')["translatedText"]
-
-    # 格式化输出（中间空一行，不重复原文）
-    reply = f"[TH] {result_th}\n\n[EN] {result_en}"
-
-    # 构造回应格式（适用于 LINE Bot）
-    response_data = {
-        "replyToken": data["events"][0]["replyToken"],
-        "messages": [{
-            "type": "text",
-            "text": reply
-        }]
+def reply_to_line(reply_token, message):
+    url = "https://api.line.me/v2/bot/message/reply"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"
     }
+    payload = {
+        "replyToken": reply_token,
+        "messages": [{"type": "text", "text": message}]
+    }
+    requests.post(url, headers=headers, json=payload)
 
-    return jsonify(response_data)
+@app.route("/callback", methods=["POST"])
+def callback():
+    data = request.get_json()
+    events = data.get("events", [])
+    if not events:
+        return "OK", 200
+
+    event = events[0]
+    message = event.get("message", {})
+    reply_token = event.get("replyToken")
+    user_text = message.get("text", "")
+
+    source_lang = detect_language(user_text)
+    if not source_lang:
+        return "OK", 200
+
+    # 中文 → 英文 + 泰文
+    if source_lang == "zh-CN":
+        en = translate(user_text, "en")
+        th = translate(user_text, "th")
+        reply = f"{user_text}\n[TH] {th}\n[EN] {en}"
+
+    # 泰文 → 中文 + 英文
+    elif source_lang == "th":
+        zh = translate(user_text, "zh-CN")
+        en = translate(user_text, "en")
+        reply = f"{user_text}\n[ZH] {zh}\n[EN] {en}"
+
+    else:
+        return "OK", 200
+
+    reply_to_line(reply_token, reply)
+    return "OK", 200
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
