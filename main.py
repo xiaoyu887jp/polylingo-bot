@@ -3,8 +3,9 @@ import requests
 
 app = Flask(__name__)
 
-LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
-GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80oY"
+LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU=
+"
+GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o喂你你"
 
 def detect_language(text):
     url = f"https://translation.googleapis.com/language/translate/v2/detect?key={GOOGLE_API_KEY}"
@@ -14,7 +15,7 @@ def detect_language(text):
         res = requests.post(url, json=payload, headers=headers, timeout=5)
         res.raise_for_status()
         return res.json()["data"]["detections"][0][0]["language"]
-    except Exception:
+    except Exception as e:
         return None
 
 def translate(text, target_lang):
@@ -52,21 +53,22 @@ def callback():
     reply_token = event.get("replyToken")
     user_text = message.get("text", "")
 
+    # 识别语言
     source_lang = detect_language(user_text)
     if not source_lang:
         return "OK", 200
 
-    # 中文 → 泰文 + 英文（中文在上）
+    # 中文 → EN + TH
     if source_lang == "zh-CN":
-        th = translate(user_text, "th")
         en = translate(user_text, "en")
-        reply = f"[TH] {th}\n\n[EN] {en}"
+        th = translate(user_text, "th")
+        reply = f"[EN] {en}\n[TH] {th}"
 
-    # 泰文 → 中文 + 英文（泰文在上）
+    # 泰文 → ZH + EN
     elif source_lang == "th":
         zh = translate(user_text, "zh-CN")
         en = translate(user_text, "en")
-        reply = f"[ZH] {zh}\n\n[EN] {en}"
+        reply = f"[ZH] {zh}\n[EN] {en}"
 
     else:
         return "OK", 200
