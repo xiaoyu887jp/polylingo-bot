@@ -3,7 +3,6 @@ import requests
 
 app = Flask(__name__)
 
-# ✅ 请将以下两项替换为你自己的密钥
 LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
 GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
@@ -53,21 +52,22 @@ def callback():
     reply_token = event.get("replyToken")
     user_text = message.get("text", "")
 
+    # 识别语言
     source_lang = detect_language(user_text)
     if not source_lang:
         return "OK", 200
 
-    # 中文 → 英文 + 泰文
+    # 中文 → 泰文 + 英文
     if source_lang == "zh-CN":
-        en = translate(user_text, "en")
         th = translate(user_text, "th")
-        reply = f"{user_text}\n[TH] {th}\n[EN] {en}"
+        en = translate(user_text, "en")
+        reply = f"[TH] {th}\n\n[EN] {en}"
 
     # 泰文 → 中文 + 英文
     elif source_lang == "th":
         zh = translate(user_text, "zh-CN")
         en = translate(user_text, "en")
-        reply = f"{user_text}\n[ZH] {zh}\n[EN] {en}"
+        reply = f"[ZH] {zh}\n\n[EN] {en}"
 
     else:
         return "OK", 200
