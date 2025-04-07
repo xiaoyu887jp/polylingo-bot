@@ -55,22 +55,22 @@ def callback():
     # 识别语言
     source_lang = detect_language(user_text)
     if not source_lang:
-        return "OK", 200  # ❌ 不再发送提示
+        return "OK", 200
 
-    # 中文 → 英文 + 泰文
+    # 中文 → EN + TH
     if source_lang == "zh-CN":
         en = translate(user_text, "en")
         th = translate(user_text, "th")
         reply = f"[EN] {en}\n[TH] {th}"
 
-    # 泰文 → 中文 + 英文
+    # 泰文 → ZH + EN
     elif source_lang == "th":
         zh = translate(user_text, "zh-CN")
         en = translate(user_text, "en")
-        reply = f"[中文] {zh}\n[EN] {en}"
+        reply = f"[ZH] {zh}\n[EN] {en}"
 
     else:
-        return "OK", 200  # ❌ 其他语言不回复任何提示
+        return "OK", 200
 
     reply_to_line(reply_token, reply)
     return "OK", 200
