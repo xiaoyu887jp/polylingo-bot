@@ -1,10 +1,13 @@
-from flask import Flask, request
+from flask import Flask, request, jsonify
 import requests
 
 app = Flask(__name__)
 
-LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
+LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gFIi88JV/7Uh+ZM9m0BOzQlhZNZhL6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
 GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
+
+# 紀錄用戶設定語言的資料庫（暫時用簡單方式儲存）
+user_language = {}
 
 def detect_language(text):
     url = f"https://translation.googleapis.com/language/translate/v2/detect?key={GOOGLE_API_KEY}"
@@ -26,7 +29,7 @@ def translate(text, target_lang):
         res.raise_for_status()
         return res.json()["data"]["translations"][0]["translatedText"]
     except Exception as e:
-        return f"[Translation Failed]: {e}"
+        return None
 
 def reply_to_line(reply_token, message):
     url = "https://api.line.me/v2/bot/message/reply"
@@ -34,46 +37,43 @@ def reply_to_line(reply_token, message):
         "Content-Type": "application/json",
         "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"
     }
-    payload = {
-        "replyToken": reply_token,
-        "messages": [{"type": "text", "text": message}]
-    }
-    requests.post(url, headers=headers, json=payload)
+    payload = {"replyToken": reply_token, "messages": [{"type": "text", "text": message}]}
+    requests.post(url, json=payload, headers=headers)
 
 @app.route("/callback", methods=["POST"])
 def callback():
-    data = request.get_json()
-    events = data.get("events", [])
-    if not events:
-        return "OK", 200
+    data = request.json
+    user_text = data["events"][0]["message"]["text"]
+    reply_token = data["events"][0]["replyToken"]
+    user_id = data["events"][0]["source"]["userId"]
 
-    event = events[0]
-    message = event.get("message", {})
-    reply_token = event.get("replyToken")
-    user_text = message.get("text", "")
+    # 使用設定的語言或預設繁體中文
+    target_lang = user_language.get(user_id, "zh-tw")
 
-    # 识别语言
     source_lang = detect_language(user_text)
     if not source_lang:
+        reply_to_line(reply_token, "無法識別語言")
         return "OK", 200
 
-    # 中文 → 泰文 + 英文
-    if source_lang == "zh-CN":
-        th = translate(user_text, "th")
-        en = translate(user_text, "en")
-        reply = f"[TH] {th}\n\n[EN] {en}"
-
-    # 泰文 → 中文 + 英文
-    elif source_lang == "th":
-        zh = translate(user_text, "zh-CN")
-        en = translate(user_text, "en")
-        reply = f"[ZH] {zh}\n\n[EN] {en}"
-
+    translated_text = translate(user_text, target_lang)
+    if translated_text:
+        reply = f"[翻譯結果]: {translated_text}"
     else:
-        return "OK", 200
+        reply = "翻譯失敗，請稍後再試。"
 
     reply_to_line(reply_token, reply)
     return "OK", 200
+
+@app.route("/set_language", methods=["GET"])
+def set_language():
+    lang = request.args.get("lang")
+    user_id = request.args.get("user_id")
+
+    if not user_id or lang not in ["zh-cn", "zh-tw"]:
+        return jsonify({"status": "error", "message": "參數錯誤"})
+
+    user_language[user_id] = lang
+    return jsonify({"status": "success", "language_set": lang})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
