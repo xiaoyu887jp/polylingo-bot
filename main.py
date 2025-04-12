@@ -11,10 +11,10 @@ def detect_language(text):
     payload = {"q": text}
     headers = {"Content-Type": "application/json"}
     try:
-        res = requests.post(url, json=payload, headers=headers)
+        res = requests.post(url, json=payload, headers=headers, timeout=5)
         res.raise_for_status()
         return res.json()["data"]["detections"][0][0]["language"]
-    except:
+    except Exception as e:
         return None
 
 def translate(text, target_lang):
@@ -22,11 +22,11 @@ def translate(text, target_lang):
     payload = {"q": text, "target": target_lang, "format": "text"}
     headers = {"Content-Type": "application/json"}
     try:
-        res = requests.post(url, json=payload, headers=headers)
+        res = requests.post(url, json=payload, headers=headers, timeout=5)
         res.raise_for_status()
         return res.json()["data"]["translations"][0]["translatedText"]
-    except:
-        return "[Translation Error]"
+    except Exception as e:
+        return f"[Translation Failed]: {e}"
 
 def reply_to_line(reply_token, message):
     url = "https://api.line.me/v2/bot/message/reply"
@@ -34,8 +34,11 @@ def reply_to_line(reply_token, message):
         "Content-Type": "application/json",
         "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"
     }
-    payload = {"replyToken": reply_token, "messages": [{"type": "text", "text": message}]}
-    requests.post(url, json=payload, headers=headers)
+    payload = {
+        "replyToken": reply_token,
+        "messages": [{"type": "text", "text": message}]
+    }
+    requests.post(url, headers=headers, json=payload)
 
 @app.route("/callback", methods=["POST"])
 def callback():
@@ -49,24 +52,25 @@ def callback():
     reply_token = event.get("replyToken")
     user_text = message.get("text", "")
 
+    # 识别语言
     source_lang = detect_language(user_text)
-
-    # 如果语言检测失败，直接告诉用户
     if not source_lang:
-        reply_to_line(reply_token, "[无法识别语言]")
         return "OK", 200
 
-    # 强化版翻译流程（确保中文一定翻译成泰文）
-    if source_lang in ["zh-CN", "zh-TW"]:
-        th_translation = translate(user_text, "th")
-        reply = f"{th_translation}"
+    # 中文 → 泰文 + 英文
+    if source_lang == "zh-CN":
+        th = translate(user_text, "th")
+        en = translate(user_text, "en")
+        reply = f"[TH] {th}\n\n[EN] {en}"
 
+    # 泰文 → 中文 + 英文
     elif source_lang == "th":
-        zh_translation = translate(user_text, "zh-CN")
-        reply = f"{zh_translation}"
+        zh = translate(user_text, "zh-CN")
+        en = translate(user_text, "en")
+        reply = f"[ZH] {zh}\n\n[EN] {en}"
 
     else:
-        reply = "[暂不支持此语言翻译]"
+        return "OK", 200
 
     reply_to_line(reply_token, reply)
     return "OK", 200
