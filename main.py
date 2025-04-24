@@ -3,13 +3,14 @@ import requests
 
 app = Flask(__name__)
 
-# 替换你的真实密钥
-LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
+# 你自己的真實密鑰（已替換）
+LINE_ACCESS_TOKEN = "bBVhlw3/hYaZ2y6QDfa0ZOgwlvAfKhz+8RU0d0LFd1H6NdtSyhekPZw3vqOnSVrBUqQmVVcJBpCB8RXkmLSnJNbd7QkZ1Gqdgnu6v5fj3x7qTiYO3luhkO4EoTQWocIeVQNxf5Z9YDtcuUlWYNPBGQdB04t89/1O/w1cDnyilFU="
 GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
 user_language_settings = {}
+group_greeted = set()  # 記錄群組或個人是否已發送過卡片
 
-# 完整的Flex Message JSON (16种语言)
+# 完整Flex Message (16種語言完整版本)
 flex_message_json = {
     "type": "bubble",
     "header": {
@@ -17,8 +18,7 @@ flex_message_json = {
         "layout": "vertical",
         "contents": [{
             "type": "text",
-            "text":  "🌍 Please select your translation language",
-
+            "text": "🌍 Please select your translation language",
             "weight": "bold",
             "size": "lg",
             "align": "center"
@@ -76,7 +76,10 @@ flex_message_json = {
 
 def reply_to_line(reply_token, messages):
     url = "https://api.line.me/v2/bot/message/reply"
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"
+    }
     payload = {"replyToken": reply_token, "messages": messages}
     requests.post(url, headers=headers, json=payload)
 
@@ -91,23 +94,30 @@ def callback():
     data = request.get_json()
     for event in data.get("events", []):
         reply_token = event["replyToken"]
-        user_id = event["source"].get("userId")
+        source = event["source"]
+        user_id = source.get("userId")
+        group_id = source.get("groupId")
         text = event.get("message", {}).get("text", "")
+
+        identifier = group_id if group_id else user_id
 
         if text.startswith("/setlang_add"):
             lang = text.split()[1]
-            user_language_settings.setdefault(user_id, set()).add(lang)
+            user_language_settings[identifier] = set([lang])
             reply_to_line(reply_token, [{"type": "text", "text": f"✅ Added {lang}"}])
             continue
 
         if text == "/resetlang":
-            user_language_settings[user_id] = set()
+            user_language_settings.pop(identifier, None)
             reply_to_line(reply_token, [{"type": "text", "text": "🔄 Languages reset."}])
             continue
 
-        langs = user_language_settings.get(user_id)
+        langs = user_language_settings.get(identifier)
+
         if not langs:
-            reply_to_line(reply_token, [{"type": "flex", "altText": "Select languages", "contents": flex_message_json}])
+            if identifier not in group_greeted:
+                reply_to_line(reply_token, [{"type": "flex", "altText": "Select languages", "contents": flex_message_json}])
+                group_greeted.add(identifier)
             continue
 
         translations = [{"type": "text", "text": f"[{l.upper()}] {translate(text, l)}"} for l in langs]
