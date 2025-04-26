@@ -68,26 +68,32 @@ def callback():
 
         if event["type"] == "join":
             if source_id not in group_language_settings:
-                group_language_settings[source_id] = []
-                reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
+                reply_to_line(reply_token, [{
+                    "type": "flex",
+                    "altText": "Select language",
+                    "contents": flex_message_json
+                }])
             continue
 
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"]
 
+            if user_text in ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]:
+                group_language_settings[source_id] = user_text
+                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Language set to {user_text}"}])
+                continue
+
             if user_text == "/resetlang":
                 group_language_settings.pop(source_id, None)
-                reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
+                reply_to_line(reply_token, [{
+                    "type": "flex",
+                    "altText": "Select language",
+                    "contents": flex_message_json
+                }])
                 continue
 
-            langs = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
-            if user_text in langs:
-                if user_text not in group_language_settings[source_id]:
-                    group_language_settings[source_id].append(user_text)
-                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Languages set: {', '.join(group_language_settings[source_id])}"}])
-                continue
-
-            for lang in group_language_settings.get(source_id, []):
+            lang = group_language_settings.get(source_id)
+            if lang:
                 translated_text = translate(user_text, lang)
                 reply_to_line(reply_token, [{"type": "text", "text": f"[{lang.upper()}] {translated_text}"}])
 
