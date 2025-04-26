@@ -13,78 +13,85 @@ flex_message_json = {
     "header": {
         "type": "box",
         "layout": "vertical",
-        "contents": [{"type": "text", "text": "🌍 Choose Languages", "weight": "bold", "size": "lg", "align": "center"}],
+        "contents": [
+            {"type": "text", "text": "🌍 Please select translation language", "weight": "bold", "size": "lg", "align": "center"}
+        ],
         "backgroundColor": "#FFCC80"
     },
     "body": {
         "type": "box",
         "layout": "vertical",
+        "spacing": "sm",
         "contents": [
-            {"type": "button", "action": {"type": "message", "label": "🇺🇸 English", "text": "/setlang_add en"}},
-            {"type": "button", "action": {"type": "message", "label": "🇨🇳 简体中文", "text": "/setlang_add zh-cn"}},
-            {"type": "button", "action": {"type": "message", "label": "🇹🇼 繁體中文", "text": "/setlang_add zh-tw"}},
-            {"type": "button", "action": {"type": "message", "label": "🇯🇵 日本語", "text": "/setlang_add ja"}},
-            {"type": "button", "action": {"type": "message", "label": "🇹🇭 ภาษาไทย", "text": "/setlang_add th"}},
-            {"type": "button", "action": {"type": "message", "label": "🇰🇷 한국어", "text": "/setlang_add ko"}},
-            {"type": "button", "action": {"type": "message", "label": "🇫🇷 Français", "text": "/setlang_add fr"}},
-            {"type": "button", "action": {"type": "message", "label": "🇩🇪 Deutsch", "text": "/setlang_add de"}},
-            {"type": "button", "action": {"type": "message", "label": "🇮🇹 Italiano", "text": "/setlang_add it"}},
-            {"type": "button", "action": {"type": "message", "label": "🇪🇸 Español", "text": "/setlang_add es"}},
-            {"type": "button", "action": {"type": "message", "label": "🇻🇳 Tiếng Việt", "text": "/setlang_add vi"}},
-            {"type": "button", "action": {"type": "message", "label": "🇮🇩 Bahasa Indonesia", "text": "/setlang_add id"}},
-            {"type": "button", "action": {"type": "message", "label": "🇷🇺 Русский", "text": "/setlang_add ru"}},
-            {"type": "button", "action": {"type": "message", "label": "🇵🇹 Português", "text": "/setlang_add pt"}},
-            {"type": "button", "action": {"type": "message", "label": "🇸🇦 العربية", "text": "/setlang_add ar"}},
-            {"type": "button", "action": {"type": "message", "label": "🇳🇱 Nederlands", "text": "/setlang_add nl"}}
+            {"type":"button","style":"primary","color":"#4CAF50","action":{"type":"message","label":"🇺🇸 English","text":"en"}},
+            {"type":"button","style":"primary","color":"#33CC66","action":{"type":"message","label":"🇨🇳 简体中文","text":"zh-cn"}},
+            {"type":"button","style":"primary","color":"#3399FF","action":{"type":"message","label":"🇹🇼 繁體中文","text":"zh-tw"}},
+            {"type":"button","style":"primary","color":"#FF6666","action":{"type":"message","label":"🇯🇵 日本語","text":"ja"}},
+            {"type":"button","style":"primary","color":"#9966CC","action":{"type":"message","label":"🇰🇷 한국어","text":"ko"}},
+            {"type":"button","style":"primary","color":"#FFCC00","action":{"type":"message","label":"🇹🇭 ภาษาไทย","text":"th"}},
+            {"type":"button","style":"primary","color":"#FF9933","action":{"type":"message","label":"🇻🇳 Tiếng Việt","text":"vi"}},
+            {"type":"button","style":"primary","color":"#33CCCC","action":{"type":"message","label":"🇫🇷 Français","text":"fr"}},
+            {"type":"button","style":"primary","color":"#33CC66","action":{"type":"message","label":"🇪🇸 Español","text":"es"}},
+            {"type":"button","style":"primary","color":"#3399FF","action":{"type":"message","label":"🇩🇪 Deutsch","text":"de"}},
+            {"type":"button","style":"primary","color":"#4CAF50","action":{"type":"message","label":"🇮🇩 Bahasa Indonesia","text":"id"}},
+            {"type":"button","style":"primary","color":"#FF6666","action":{"type":"message","label":"🇮🇳 हिन्दी","text":"hi"}},
+            {"type":"button","style":"primary","color":"#66CC66","action":{"type":"message","label":"🇮🇹 Italiano","text":"it"}},
+            {"type":"button","style":"primary","color":"#FF9933","action":{"type":"message","label":"🇵🇹 Português","text":"pt"}},
+            {"type":"button","style":"primary","color":"#9966CC","action":{"type":"message","label":"🇷🇺 Русский","text":"ru"}},
+            {"type":"button","style":"primary","color":"#CC3300","action":{"type":"message","label":"🇸🇦 العربية","text":"ar"}},
+            {"type":"button","style":"secondary","action":{"type":"message","label":"🔄 Reset","text":"/resetlang"}}
         ]
     }
 }
 
-@app.route("/callback", methods=['POST'])
-def callback():
-    body = request.json
-    events = body['events']
-    for event in events:
-        reply_token = event['replyToken']
-        group_id = event['source'].get('groupId', event['source'].get('userId'))
-        user_message = event['message']['text'].lower()
+def reply_to_line(reply_token, messages):
+    requests.post("https://api.line.me/v2/bot/message/reply",
+        headers={
+            "Authorization": f"Bearer {LINE_ACCESS_TOKEN}",
+            "Content-Type": "application/json"
+        },
+        json={"replyToken": reply_token, "messages": messages})
 
-        if user_message.startswith('/setlang_add '):
-            lang = user_message.split(' ')[1]
-            languages = group_language_settings.get(group_id, [])
-            if lang not in languages:
-                languages.append(lang)
-                group_language_settings[group_id] = languages
-                reply_to_line(reply_token, f"✅ 已添加语言: {', '.join(languages)}")
+def translate(text, lang):
+    res = requests.post(
+        f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}",
+        json={"q": text, "target": lang, "format": "text"}
+    )
+    return res.json()["data"]["translations"][0]["translatedText"]
+
+@app.route("/callback", methods=["POST"])
+def callback():
+    events = request.get_json().get("events", [])
+    for event in events:
+        reply_token = event["replyToken"]
+        source_id = event["source"].get("groupId") or event["source"].get("userId")
+
+        if event["type"] == "join":
+            if source_id not in group_language_settings:
+                group_language_settings[source_id] = []
+                reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
             continue
 
-        languages = group_language_settings.get(group_id, [])
-        if not languages:
-            send_flex(reply_token, "请选择语言：")
-        else:
-            for lang in languages:
-                translation = translate_text(user_message, lang)
-                reply_to_line(reply_token, f"[{lang}] {translation}")
+        if event["type"] == "message" and event["message"]["type"] == "text":
+            user_text = event["message"]["text"]
 
-    return 'OK'
+            if user_text == "/resetlang":
+                group_language_settings.pop(source_id, None)
+                reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
+                continue
 
-def send_flex(reply_token, alt_text):
-    headers = {"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
-    payload = {
-        "replyToken": reply_token,
-        "messages": [{"type": "flex", "altText": alt_text, "contents": flex_message_json}]
-    }
-    requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=payload)
+            langs = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
+            if user_text in langs:
+                if user_text not in group_language_settings[source_id]:
+                    group_language_settings[source_id].append(user_text)
+                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Languages set: {', '.join(group_language_settings[source_id])}"}])
+                continue
 
-def reply_to_line(reply_token, text):
-    headers = {"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
-    payload = {"replyToken": reply_token, "messages": [{"type": "text", "text": text}]}
-    requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=payload)
+            for lang in group_language_settings.get(source_id, []):
+                translated_text = translate(user_text, lang)
+                reply_to_line(reply_token, [{"type": "text", "text": f"[{lang.upper()}] {translated_text}"}])
 
-def translate_text(text, target):
-    url = f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}"
-    res = requests.post(url, json={'q': text, 'target': target})
-    return res.json()['data']['translations'][0]['translatedText']
+    return "OK", 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
