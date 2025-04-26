@@ -58,14 +58,14 @@ def callback():
     events = request.get_json().get("events", [])
     for event in events:
         reply_token = event["replyToken"]
-        user_text = event["message"]["text"]
         source_id = event["source"].get("groupId") or event["source"].get("userId")
 
+        # 仅对join事件进行修改，确保每次加入都发卡片
         if event["type"] == "join":
-            if source_id not in group_greeted:
-                group_greeted.add(source_id)
-                reply_to_line(reply_token,[{"type":"flex","altText":"Select language","contents":flex_message_json}])
+            reply_to_line(reply_token,[{"type":"flex","altText":"Select language","contents":flex_message_json}])
             continue
+
+        user_text = event["message"]["text"]
 
         if user_text.startswith("/setlang"):
             lang = user_text.split()[1]
@@ -75,7 +75,6 @@ def callback():
 
         if user_text == "/resetlang":
             group_language_settings.pop(source_id, None)
-            group_greeted.discard(source_id)
             reply_to_line(reply_token,[{"type":"text","text":"🔄 Language reset."}])
             continue
 
