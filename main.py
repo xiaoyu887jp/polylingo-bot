@@ -3,7 +3,7 @@ import requests
 
 app = Flask(__name__)
 
-LINE_ACCESS_TOKEN = "3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
+LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
 GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
 group_language_settings = {}
@@ -53,6 +53,9 @@ def translate(text, lang):
 def callback():
     events = request.get_json().get("events", [])
     for event in events:
+        if 'replyToken' not in event:  # ← 关键的防错处理！
+            continue
+
         reply_token = event["replyToken"]
         source_id = event["source"].get("groupId") or event["source"].get("userId")
 
