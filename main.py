@@ -6,17 +6,15 @@ app = Flask(__name__)
 LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
 GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
-group_language_settings = {}
-group_greeted = set()
+# 使用 user_id 做為語言設定的標記
+user_language_settings = {}
 
 flex_message_json = {
     "type": "bubble",
     "header": {
         "type": "box",
         "layout": "vertical",
-        "contents": [
-            {"type": "text", "text": "🌍 Please select translation language", "weight": "bold", "size": "lg", "align": "center"}
-        ],
+        "contents": [{"type": "text", "text": "🌍 Please select translation language", "weight": "bold", "size": "lg", "align": "center"}],
         "backgroundColor": "#FFCC80"
     },
     "body": {
@@ -60,35 +58,38 @@ def callback():
     events = request.get_json().get("events", [])
     for event in events:
         reply_token = event["replyToken"]
-        source_id = event["source"].get("groupId") or event["source"].get("userId")
+        event_type = event["type"]
+        source = event["source"]
+        user_id = source.get("userId")
 
-        if event["type"] == "join":
-            if source_id not in group_greeted:
-                group_greeted.add(source_id)
-                reply_to_line(reply_token, [{"type":"flex","altText":"Select language","contents":flex_message_json}])
+        if event_type == "join":
+            reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
             continue
 
-        if event["type"] == "message" and event["message"]["type"] == "text":
+        if event_type == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"]
 
             if user_text.startswith("/setlang"):
                 lang = user_text.split()[1]
-                group_language_settings[source_id] = lang
-                reply_to_line(reply_token, [{"type":"text","text":f"✅ Group language set to {lang}"}])
+                user_language_settings[user_id] = lang  # 使用user_id單獨設置語言
+                reply_to_line(reply_token,[{"type":"text","text":f"✅ Your language set to {lang}"}])
                 continue
 
             if user_text == "/resetlang":
-                group_language_settings.pop(source_id, None)
-                group_greeted.discard(source_id)
-                reply_to_line(reply_token, [{"type":"text","text":"🔄 Language reset."}])
+                user_language_settings.pop(user_id, None)
+                reply_to_line(reply_token, [
+                    {"type":"text","text":"🔄 Language reset."},
+                    {"type":"flex","altText":"Select language","contents":flex_message_json}
+                ])
                 continue
 
-            lang = group_language_settings.get(source_id)
+            # 根據發言者自己的設置翻譯
+            lang = user_language_settings.get(user_id)
             if lang:
                 translated_text = translate(user_text, lang)
-                reply_to_line(reply_token, [{"type":"text","text":f"[{lang.upper()}] {translated_text}"}])
+                reply_to_line(reply_token,[{"type":"text","text":f"[{lang.upper()}] {translated_text}"}])
 
     return "OK", 200
 
-if __name__=="__main__":
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
