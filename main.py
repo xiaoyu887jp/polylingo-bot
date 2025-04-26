@@ -14,7 +14,7 @@ flex_message_json = {
         "type": "box",
         "layout": "vertical",
         "contents": [
-            {"type": "text", "text": "🌍 Please select translation languages", "weight": "bold", "size": "lg", "align": "center"}
+            {"type": "text", "text": "🌍 Please select translation language", "weight": "bold", "size": "lg", "align": "center"}
         ],
         "backgroundColor": "#FFCC80"
     },
@@ -29,6 +29,16 @@ flex_message_json = {
             {"type":"button","style":"primary","color":"#FF6666","action":{"type":"message","label":"🇯🇵 日本語","text":"ja"}},
             {"type":"button","style":"primary","color":"#9966CC","action":{"type":"message","label":"🇰🇷 한국어","text":"ko"}},
             {"type":"button","style":"primary","color":"#FFCC00","action":{"type":"message","label":"🇹🇭 ภาษาไทย","text":"th"}},
+            {"type":"button","style":"primary","color":"#FF9933","action":{"type":"message","label":"🇻🇳 Tiếng Việt","text":"vi"}},
+            {"type":"button","style":"primary","color":"#33CCCC","action":{"type":"message","label":"🇫🇷 Français","text":"fr"}},
+            {"type":"button","style":"primary","color":"#33CC66","action":{"type":"message","label":"🇪🇸 Español","text":"es"}},
+            {"type":"button","style":"primary","color":"#3399FF","action":{"type":"message","label":"🇩🇪 Deutsch","text":"de"}},
+            {"type":"button","style":"primary","color":"#4CAF50","action":{"type":"message","label":"🇮🇩 Bahasa Indonesia","text":"id"}},
+            {"type":"button","style":"primary","color":"#FF6666","action":{"type":"message","label":"🇮🇳 हिन्दी","text":"hi"}},
+            {"type":"button","style":"primary","color":"#66CC66","action":{"type":"message","label":"🇮🇹 Italiano","text":"it"}},
+            {"type":"button","style":"primary","color":"#FF9933","action":{"type":"message","label":"🇵🇹 Português","text":"pt"}},
+            {"type":"button","style":"primary","color":"#9966CC","action":{"type":"message","label":"🇷🇺 Русский","text":"ru"}},
+            {"type":"button","style":"primary","color":"#CC3300","action":{"type":"message","label":"🇸🇦 العربية","text":"ar"}},
             {"type":"button","style":"secondary","action":{"type":"message","label":"🔄 Reset","text":"/resetlang"}}
         ]
     }
@@ -53,40 +63,39 @@ def translate(text, lang):
 def callback():
     events = request.get_json().get("events", [])
     for event in events:
-        if 'replyToken' not in event:  # ← 关键的防错处理！
-            continue
-
         reply_token = event["replyToken"]
         source_id = event["source"].get("groupId") or event["source"].get("userId")
 
         if event["type"] == "join":
-            group_language_settings[source_id] = []
-            reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
+            if source_id not in group_language_settings:
+                reply_to_line(reply_token, [{
+                    "type": "flex",
+                    "altText": "Select language",
+                    "contents": flex_message_json
+                }])
             continue
 
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"]
 
+            if user_text in ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]:
+                group_language_settings[source_id] = user_text
+                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Language set to {user_text}"}])
+                continue
+
             if user_text == "/resetlang":
-                group_language_settings[source_id] = []
-                reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
+                group_language_settings.pop(source_id, None)
+                reply_to_line(reply_token, [{
+                    "type": "flex",
+                    "altText": "Select language",
+                    "contents": flex_message_json
+                }])
                 continue
 
-            supported_langs = ["en", "ja", "zh-tw", "zh-cn", "th", "ko"]
-            if user_text in supported_langs:
-                if user_text not in group_language_settings[source_id]:
-                    group_language_settings[source_id].append(user_text)
-                    reply_to_line(reply_token, [{"type": "text", "text": f"✅ Added language: {user_text.upper()}"}])
-                continue
-
-            if not group_language_settings[source_id]:
-                reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
-            else:
-                translations = []
-                for lang in group_language_settings[source_id]:
-                    translated_text = translate(user_text, lang)
-                    translations.append({"type": "text", "text": f"[{lang.upper()}] {translated_text}"})
-                reply_to_line(reply_token, translations)
+            lang = group_language_settings.get(source_id)
+            if lang:
+                translated_text = translate(user_text, lang)
+                reply_to_line(reply_token, [{"type": "text", "text": f"[{lang.upper()}] {translated_text}"}])
 
     return "OK", 200
 
