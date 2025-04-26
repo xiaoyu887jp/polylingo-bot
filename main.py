@@ -6,7 +6,7 @@ app = Flask(__name__)
 LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
 GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
-# 使用 user_id 做為語言設定的標記
+# 使用用戶個人設定多語言的集合
 user_language_settings = {}
 
 flex_message_json = {
@@ -63,6 +63,7 @@ def callback():
         user_id = source.get("userId")
 
         if event_type == "join":
+            user_language_settings.pop(user_id, None)  # 重置個人語言設定
             reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
             continue
 
@@ -71,8 +72,11 @@ def callback():
 
             if user_text.startswith("/setlang"):
                 lang = user_text.split()[1]
-                user_language_settings[user_id] = lang  # 使用user_id單獨設置語言
-                reply_to_line(reply_token,[{"type":"text","text":f"✅ Your language set to {lang}"}])
+                if user_id not in user_language_settings:
+                    user_language_settings[user_id] = set()
+                user_language_settings[user_id].add(lang)
+                langs_display = ', '.join(user_language_settings[user_id])
+                reply_to_line(reply_token,[{"type":"text","text":f"✅ Added language: {lang}. Current languages: {langs_display}"}])
                 continue
 
             if user_text == "/resetlang":
@@ -83,11 +87,13 @@ def callback():
                 ])
                 continue
 
-            # 根據發言者自己的設置翻譯
-            lang = user_language_settings.get(user_id)
-            if lang:
-                translated_text = translate(user_text, lang)
-                reply_to_line(reply_token,[{"type":"text","text":f"[{lang.upper()}] {translated_text}"}])
+            langs = user_language_settings.get(user_id, set())
+            if langs:
+                messages = []
+                for lang in langs:
+                    translated_text = translate(user_text, lang)
+                    messages.append({"type":"text","text":f"[{lang.upper()}] {translated_text}"})
+                reply_to_line(reply_token, messages)
 
     return "OK", 200
 
