@@ -3,7 +3,7 @@ import requests
 
 app = Flask(__name__)
 
-LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
+LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU=
 GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
 group_language_settings = {}
@@ -58,15 +58,11 @@ def translate(text, lang):
 def callback():
     events = request.get_json().get("events", [])
     for event in events:
-        if "replyToken" not in event:
-            continue
-
         reply_token = event["replyToken"]
         source_id = event["source"].get("groupId") or event["source"].get("userId")
 
         if event["type"] == "join":
-            if source_id not in group_language_settings:
-                reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
+            reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
             continue
 
         if event["type"] == "message" and event["message"]["type"] == "text":
