@@ -4,7 +4,7 @@ import requests
 app = Flask(__name__)
 
 LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
-GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80oY"
+GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
 group_language_settings = {}
 group_greeted = set()
@@ -60,7 +60,6 @@ def callback():
     events = request.get_json().get("events", [])
     for event in events:
         reply_token = event["replyToken"]
-        user_text = event["message"]["text"]
         source_id = event["source"].get("groupId") or event["source"].get("userId")
 
         if event["type"] == "join":
@@ -69,22 +68,25 @@ def callback():
                 reply_to_line(reply_token, [{"type":"flex","altText":"Select language","contents":flex_message_json}])
             continue
 
-        if user_text.startswith("/setlang"):
-            lang = user_text.split()[1]
-            group_language_settings[source_id] = lang
-            reply_to_line(reply_token, [{"type":"text","text":f"✅ Group language set to {lang}"}])
-            continue
+        if event["type"] == "message" and event["message"]["type"] == "text":
+            user_text = event["message"]["text"]
 
-        if user_text == "/resetlang":
-            group_language_settings.pop(source_id, None)
-            group_greeted.discard(source_id)
-            reply_to_line(reply_token, [{"type":"text","text":"🔄 Language reset."}])
-            continue
+            if user_text.startswith("/setlang"):
+                lang = user_text.split()[1]
+                group_language_settings[source_id] = lang
+                reply_to_line(reply_token, [{"type":"text","text":f"✅ Group language set to {lang}"}])
+                continue
 
-        lang = group_language_settings.get(source_id)
-        if lang:
-            translated_text = translate(user_text, lang)
-            reply_to_line(reply_token, [{"type":"text","text":f"[{lang.upper()}] {translated_text}"}])
+            if user_text == "/resetlang":
+                group_language_settings.pop(source_id, None)
+                group_greeted.discard(source_id)
+                reply_to_line(reply_token, [{"type":"text","text":"🔄 Language reset."}])
+                continue
+
+            lang = group_language_settings.get(source_id)
+            if lang:
+                translated_text = translate(user_text, lang)
+                reply_to_line(reply_token, [{"type":"text","text":f"[{lang.upper()}] {translated_text}"}])
 
     return "OK", 200
 
