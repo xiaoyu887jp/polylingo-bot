@@ -6,7 +6,7 @@ app = Flask(__name__)
 LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
 GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
-user_language_settings = {}
+language_settings = {}
 
 LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
 
@@ -27,10 +27,11 @@ def callback():
     events = request.get_json().get("events", [])
     for event in events:
         reply_token = event["replyToken"]
-        user_id = event["source"]["userId"]
+        source = event["source"]
+        source_id = source.get("userId") or source.get("groupId")
 
         if event["type"] == "join":
-            user_language_settings[user_id] = []
+            language_settings[source_id] = []
             reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
             continue
 
@@ -38,18 +39,18 @@ def callback():
             user_text = event["message"]["text"]
 
             if user_text == "/resetlang":
-                user_language_settings[user_id] = []
+                language_settings[source_id] = []
                 reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
                 continue
 
             if user_text in LANGUAGES:
-                user_language_settings.setdefault(user_id, [])
-                if user_text not in user_language_settings[user_id]:
-                    user_language_settings[user_id].append(user_text)
-                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(user_language_settings[user_id])}"}])
+                language_settings.setdefault(source_id, [])
+                if user_text not in language_settings[source_id]:
+                    language_settings[source_id].append(user_text)
+                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Languages now: {', '.join(language_settings[source_id])}"}])
                 continue
 
-            langs = user_language_settings.get(user_id, [])
+            langs = language_settings.get(source_id, [])
             if langs:
                 translated_messages = []
                 for lang in langs:
