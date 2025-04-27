@@ -43,8 +43,10 @@ def callback():
                 continue
 
             if user_text in LANGUAGES:
-                group_language_settings[source_id] = [user_text]
-                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Language set to: {user_text}"}])
+                group_language_settings.setdefault(source_id, [])
+                if user_text not in group_language_settings[source_id]:
+                    group_language_settings[source_id].append(user_text)
+                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Languages now: {', '.join(group_language_settings[source_id])}"}])
                 continue
 
             langs = group_language_settings.get(source_id, [])
