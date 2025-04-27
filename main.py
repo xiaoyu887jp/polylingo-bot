@@ -28,38 +28,37 @@ def callback():
     for event in events:
         reply_token = event["replyToken"]
         source = event["source"]
-        user_id = source.get("userId")
+        group_id = source.get("groupId", "private")
+        user_id = source.get("userId", "unknown")
+        key = f"{group_id}_{user_id}"
 
         if event["type"] == "join":
+            user_language_settings[key] = []
             reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
             continue
 
         if event["type"] == "message" and event["message"]["type"] == "text":
-            if not user_id:
-                reply_to_line(reply_token, [{"type": "text", "text": "❌ Please add bot as a friend or enable user ID access."}])
-                continue
-
             user_text = event["message"]["text"]
 
             if user_text == "/resetlang":
-                user_language_settings[user_id] = []
+                user_language_settings[key] = []
                 reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
                 continue
 
             if user_text in LANGUAGES:
-                user_language_settings.setdefault(user_id, [])
-                if user_text not in user_language_settings[user_id]:
-                    user_language_settings[user_id].append(user_text)
-                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(user_language_settings[user_id])}"}])
+                user_language_settings.setdefault(key, [])
+                if user_text not in user_language_settings[key]:
+                    user_language_settings[key].append(user_text)
+                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(user_language_settings[key])}"}])
                 continue
 
-            langs = user_language_settings.get(user_id, [])
+            langs = user_language_settings.get(key, [])
             if langs:
-                translated_messages = []
+                messages = []
                 for lang in langs:
                     translated_text = translate(user_text, lang)
-                    translated_messages.append({"type": "text", "text": f"[{lang.upper()}] {translated_text}"})
-                reply_to_line(reply_token, translated_messages)
+                    messages.append({"type": "text", "text": f"[{lang.upper()}] {translated_text}"})
+                reply_to_line(reply_token, messages)
 
     return "OK", 200
 
