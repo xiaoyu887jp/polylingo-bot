@@ -8,6 +8,7 @@ GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
 user_language_settings = {}
 user_usage_count = {}
+user_avatar_cache = {}
 
 LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
 
@@ -20,13 +21,13 @@ def reply_to_line(reply_token, messages):
 
 def translate(text, lang):
     res = requests.post(f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}",
-        json={"q": text, "target": lang, "format": "text"})
+        json={"q": text, "target": lang, "format": "text"}, timeout=5)
     return res.json()["data"]["translations"][0]["translatedText"]
 
 def mark_as_read(event_id):
     requests.post(
         f"https://api.line.me/v2/bot/message/{event_id}/markAsRead",
-        headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
+        headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}, timeout=5
     )
 
 @app.route("/callback", methods=["POST"])
@@ -63,9 +64,12 @@ def callback():
                 continue
 
             langs = user_language_settings.get(key, [])
-            profile_res = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}", headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"})
-            profile_data = profile_res.json()
-            user_avatar = profile_data.get("pictureUrl", "")
+            user_avatar = user_avatar_cache.get(user_id)
+
+            if not user_avatar:
+                profile_res = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}", headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}, timeout=5)
+                user_avatar = profile_res.json().get("pictureUrl", "")
+                user_avatar_cache[user_id] = user_avatar
 
             messages = []
             usage = user_usage_count.get(user_id, 0)
