@@ -63,27 +63,25 @@ def callback():
                 continue
 
             langs = user_language_settings.get(key, [])
-            profile_res = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}",
-                                       headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"})
+            profile_res = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}", headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"})
             profile_data = profile_res.json()
-            user_name = profile_data.get("displayName", "User")
             user_avatar = profile_data.get("pictureUrl", "")
 
             messages = []
             usage = user_usage_count.get(user_id, 0)
             if usage >= 5000:
-                messages.append({"type": "text", "text": "⚠️ 您的免費翻譯額度已用完，請升級付費繼續使用。"})
+                messages.append({"type": "text", "text": "⚠️ 免費翻譯額度已用完，請升級付費繼續使用。"})
             else:
                 for lang in langs:
                     if usage + len(user_text) > 5000:
-                        messages.append({"type": "text", "text": "⚠️ 您的免費翻譯額度已用完，請升級付費繼續使用。"})
+                        messages.append({"type": "text", "text": "⚠️ 免費翻譯額度已用完，請升級付費繼續使用。"})
                         break
                     translated_text = translate(user_text, lang)
                     usage += len(user_text)
                     messages.append({
                         "type": "text",
                         "text": translated_text,
-                        "sender": {"name": f"{user_name} ({lang})", "iconUrl": user_avatar}
+                        "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}
                     })
                 user_usage_count[user_id] = usage
 
