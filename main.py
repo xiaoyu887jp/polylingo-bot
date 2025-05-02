@@ -73,6 +73,15 @@ def callback():
         user_id = source.get("userId", "unknown")
         key = f"{group_id}_{user_id}"
 
+        # 新增日誌記錄
+        print(f"收到來自群組ID {group_id}，成員ID {user_id} 的訊息。訊息內容: {event.get('message', {}).get('text')}")
+
+        # 拉黑功能設定
+        BLACKLIST = {"你要拉黑的用戶的 LINE ID 放這裡"}
+        if user_id in BLACKLIST:
+            print(f"已經拉黑此用戶 {user_id}，不翻譯也不回應。")
+            continue
+
         if event["type"] == "join":
             user_language_settings[key] = []
             reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
@@ -119,7 +128,3 @@ def callback():
             reply_to_line(reply_token, messages)
 
     return "OK", 200
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
