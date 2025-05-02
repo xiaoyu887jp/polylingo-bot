@@ -13,20 +13,16 @@ user_avatar_cache = {}
 LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
 
 flex_message_json = {
-    "type": "bubble",
-    "header": {
-        "type": "box",
-        "layout": "vertical",
-        "contents": [
-            {"type": "text", "text": "🌍 Please select translation language", "weight": "bold", "size": "lg", "align": "center"}
-        ],
-        "backgroundColor": "#FFCC80"
+    "type":"bubble",
+    "header":{
+        "type":"box",
+        "layout":"vertical",
+        "contents":[{"type":"text","text":"🌍 Please select translation language","weight":"bold","size":"lg","align":"center"}],
+        "backgroundColor":"#FFCC80"
     },
-    "body": {
-        "type": "box",
-        "layout": "vertical",
-        "spacing": "sm",
-        "contents": [
+    "body":{
+        "type":"box","layout":"vertical","spacing":"sm",
+        "contents":[
             {"type":"button","style":"primary","color":"#4CAF50","action":{"type":"message","label":"🇺🇸 English","text":"en"}},
             {"type":"button","style":"primary","color":"#33CC66","action":{"type":"message","label":"🇨🇳 简体中文","text":"zh-cn"}},
             {"type":"button","style":"primary","color":"#3399FF","action":{"type":"message","label":"🇹🇼 繁體中文","text":"zh-tw"}},
@@ -48,16 +44,17 @@ flex_message_json = {
     }
 }
 
+# 拉黑功能設定區（將你要封鎖的使用者ID填入）
+BLACKLIST = set(["這裡填入要封鎖的用戶LINE ID"])
+
 def reply_to_line(reply_token, messages):
     requests.post("https://api.line.me/v2/bot/message/reply",
-        headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"},
+        headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}","Content-Type": "application/json"},
         json={"replyToken": reply_token, "messages": messages})
 
 def translate(text, lang):
-    res = requests.post(
-        f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}",
-        json={"q": text, "target": lang, "format": "text"}
-    )
+    res = requests.post(f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}",
+        json={"q": text, "target": lang, "format": "text"}, timeout=5)
     return res.json()["data"]["translations"][0]["translatedText"]
 
 @app.route("/callback", methods=["POST"])
@@ -71,16 +68,16 @@ def callback():
         source = event["source"]
         group_id = source.get("groupId", "private")
         user_id = source.get("userId", "unknown")
-        key = f"{group_id}_{user_id}"
 
-        # 新增日誌記錄
-        print(f"收到來自群組ID {group_id}，成員ID {user_id} 的訊息。訊息內容: {event.get('message', {}).get('text')}")
+        # 顯示使用者ID和群組ID (後台記錄)
+        print(f"收到訊息來自群組 {group_id}, 用戶ID: {user_id}, 訊息: {event.get('message', {}).get('text')}")
 
-        # 拉黑功能設定
-        BLACKLIST = {"你要拉黑的用戶的 LINE ID 放這裡"}
+        # 拉黑功能檢查
         if user_id in BLACKLIST:
-            print(f"已經拉黑此用戶 {user_id}，不翻譯也不回應。")
+            print(f"用戶 {user_id} 已被拉黑，不回應。")
             continue
+
+        key = f"{group_id}_{user_id}"
 
         if event["type"] == "join":
             user_language_settings[key] = []
@@ -92,7 +89,7 @@ def callback():
 
             if user_text == "/resetlang":
                 user_language_settings[key] = []
-                reply_to_line(reply_token, [{"type":"flex","altText":"Select language","contents":flex_message_json}])
+                reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
                 continue
 
             if user_text in LANGUAGES:
@@ -104,15 +101,10 @@ def callback():
                 continue
 
             langs = user_language_settings.get(key, [])
-            if not langs:
-                continue
-
             user_avatar = user_avatar_cache.get(user_id)
+
             if not user_avatar:
-                profile_res = requests.get(
-                    f"https://api.line.me/v2/bot/profile/{user_id}",
-                    headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
-                )
+                profile_res = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}", headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}, timeout=5)
                 user_avatar = profile_res.json().get("pictureUrl", "")
                 user_avatar_cache[user_id] = user_avatar
 
@@ -120,11 +112,15 @@ def callback():
             for lang in langs:
                 translated_text = translate(user_text, lang)
                 messages.append({
-                    "type":"text",
+                    "type": "text",
                     "text": translated_text,
-                    "sender":{"name":f"Saygo ({lang})","iconUrl":user_avatar}
+                    "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}
                 })
 
             reply_to_line(reply_token, messages)
 
     return "OK", 200
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
