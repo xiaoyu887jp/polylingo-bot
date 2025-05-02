@@ -1,5 +1,6 @@
 from flask import Flask, request
 import requests
+import os
 
 app = Flask(__name__)
 
@@ -7,7 +8,6 @@ LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i8
 GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
 user_language_settings = {}
-user_usage_count = {}
 user_avatar_cache = {}
 
 LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
@@ -24,19 +24,10 @@ def translate(text, lang):
         json={"q": text, "target": lang, "format": "text"}, timeout=5)
     return res.json()["data"]["translations"][0]["translatedText"]
 
-def mark_as_read(event_id):
-    requests.post(
-        f"https://api.line.me/v2/bot/message/{event_id}/markAsRead",
-        headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}, timeout=5
-    )
-
 @app.route("/callback", methods=["POST"])
 def callback():
     events = request.get_json().get("events", [])
     for event in events:
-        event_id = event["webhookEventId"]
-        mark_as_read(event_id)
-
         reply_token = event["replyToken"]
         source = event["source"]
         group_id = source.get("groupId", "private")
@@ -56,13 +47,6 @@ def callback():
                 reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
                 continue
 
-            if user_text in LANGUAGES:
-                user_language_settings.setdefault(key, [])
-                if user_text not in user_language_settings[key]:
-                    user_language_settings[key].append(user_text)
-                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(user_language_settings[key])}"}])
-                continue
-
             langs = user_language_settings.get(key, [])
             user_avatar = user_avatar_cache.get(user_id)
 
@@ -72,26 +56,18 @@ def callback():
                 user_avatar_cache[user_id] = user_avatar
 
             messages = []
-            usage = user_usage_count.get(user_id, 0)
-            if usage >= 5000:
-                messages.append({"type": "text", "text": "⚠️ 免費翻譯額度已用完，請升級付費繼續使用。"})
-            else:
-                for lang in langs:
-                    if usage + len(user_text) > 5000:
-                        messages.append({"type": "text", "text": "⚠️ 免費翻譯額度已用完，請升級付費繼續使用。"})
-                        break
-                    translated_text = translate(user_text, lang)
-                    usage += len(user_text)
-                    messages.append({
-                        "type": "text",
-                        "text": translated_text,
-                        "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}
-                    })
-                user_usage_count[user_id] = usage
+            for lang in langs:
+                translated_text = translate(user_text, lang)
+                messages.append({
+                    "type": "text",
+                    "text": translated_text,
+                    "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}
+                })
 
             reply_to_line(reply_token, messages)
 
     return "OK", 200
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
