@@ -3,37 +3,38 @@ import requests
 
 app = Flask(__name__)
 
-LINE_ACCESS_TOKEN = 'B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU='
-GOOGLE_API_KEY = 'AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o'
+LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
+GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
 user_language_settings = {}
-group_usage = {}
+user_usage_count = {}
 
-FREE_LIMIT = 5000  # 免費字數限制
+LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
 
-LANGUAGES = [
-    "en", "ja", "zh-tw", "zh-cn", "th", "vi",
-    "ko", "fr", "es", "de", "id", "hi",
-    "it", "pt", "ru", "ar"
-]
-
-BLACKLIST = {"此處放被拉黑用戶ID"}
-
-def translate(text, target_language):
-    url = f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}"
-    response = requests.post(url, json={"q": text, "target": target_language})
-    return response.json()["data"]["translations"][0]["translatedText"]
+flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical","contents":[{"type":"text","text":"🌍 Please select translation language","weight":"bold","size":"lg","align":"center"}],"backgroundColor":"#FFCC80"},"body":{"type":"box","layout":"vertical","spacing":"sm","contents":[{"type":"button","style":"primary","color":"#4CAF50","action":{"type":"message","label":"🇺🇸 English","text":"en"}},{"type":"button","style":"primary","color":"#33CC66","action":{"type":"message","label":"🇨🇳 简体中文","text":"zh-cn"}},{"type":"button","style":"primary","color":"#3399FF","action":{"type":"message","label":"🇹🇼 繁體中文","text":"zh-tw"}},{"type":"button","style":"primary","color":"#FF6666","action":{"type":"message","label":"🇯🇵 日本語","text":"ja"}},{"type":"button","style":"primary","color":"#9966CC","action":{"type":"message","label":"🇰🇷 한국어","text":"ko"}},{"type":"button","style":"primary","color":"#FFCC00","action":{"type":"message","label":"🇹🇭 ภาษาไทย","text":"th"}},{"type":"button","style":"primary","color":"#FF9933","action":{"type":"message","label":"🇻🇳 Tiếng Việt","text":"vi"}},{"type":"button","style":"primary","color":"#33CCCC","action":{"type":"message","label":"🇫🇷 Français","text":"fr"}},{"type":"button","style":"primary","color":"#33CC66","action":{"type":"message","label":"🇪🇸 Español","text":"es"}},{"type":"button","style":"primary","color":"#3399FF","action":{"type":"message","label":"🇩🇪 Deutsch","text":"de"}},{"type":"button","style":"primary","color":"#4CAF50","action":{"type":"message","label":"🇮🇩 Bahasa Indonesia","text":"id"}},{"type":"button","style":"primary","color":"#FF6666","action":{"type":"message","label":"🇮🇳 हिन्दी","text":"hi"}},{"type":"button","style":"primary","color":"#66CC66","action":{"type":"message","label":"🇮🇹 Italiano","text":"it"}},{"type":"button","style":"primary","color":"#FF9933","action":{"type":"message","label":"🇵🇹 Português","text":"pt"}},{"type":"button","style":"primary","color":"#9966CC","action":{"type":"message","label":"🇷🇺 Русский","text":"ru"}},{"type":"button","style":"primary","color":"#CC3300","action":{"type":"message","label":"🇸🇦 العربية","text":"ar"}},{"type":"button","style":"secondary","action":{"type":"message","label":"🔄 Reset","text":"/resetlang"}}]}}
 
 def reply_to_line(reply_token, messages):
-    headers = {"Authorization": f"Bearer {LINE_ACCESS_TOKEN}", "Content-Type": "application/json"}
-    requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json={"replyToken": reply_token, "messages": messages})
+    requests.post("https://api.line.me/v2/bot/message/reply",
+        headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}","Content-Type": "application/json"},
+        json={"replyToken": reply_token, "messages": messages})
+
+def translate(text, lang):
+    res = requests.post(f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}",
+        json={"q": text, "target": lang, "format": "text"})
+    return res.json()["data"]["translations"][0]["translatedText"]
+
+def mark_as_read(event_id):
+    requests.post(
+        f"https://api.line.me/v2/bot/message/{event_id}/markAsRead",
+        headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
+    )
 
 @app.route("/callback", methods=["POST"])
 def callback():
-    events = request.json.get("events", [])
+    events = request.get_json().get("events", [])
     for event in events:
-        if 'replyToken' not in event:
-            continue
+        event_id = event["webhookEventId"]
+        mark_as_read(event_id)
 
         reply_token = event["replyToken"]
         source = event["source"]
@@ -41,47 +42,51 @@ def callback():
         user_id = source.get("userId", "unknown")
         key = f"{group_id}_{user_id}"
 
-        if user_id in BLACKLIST:
-            continue
-
         if event["type"] == "join":
-            user_language_settings[key] = ["en"]
-            reply_to_line(reply_token, [{"type": "text", "text": "已加入，預設語言為英文 (en)。"}])
+            user_language_settings[key] = []
+            reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
             continue
 
         if event["type"] == "message" and event["message"]["type"] == "text":
-            user_text = event["message"]["text"].strip().lower()
+            user_text = event["message"]["text"]
 
-            if user_text == '/resetlang':
+            if user_text == "/resetlang":
                 user_language_settings[key] = []
-                reply_to_line(reply_token, [{"type": "text", "text": "已重置語言設定。"}])
+                reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
                 continue
 
             if user_text in LANGUAGES:
-                langs = user_language_settings.setdefault(key, [])
-                if user_text not in langs:
-                    langs.append(user_text)
-                reply_to_line(reply_token, [{"type": "text", "text": f"已選語言：{', '.join(langs)}"}])
+                user_language_settings.setdefault(key, [])
+                if user_text not in user_language_settings[key]:
+                    user_language_settings[key].append(user_text)
+                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(user_language_settings[key])}"}])
                 continue
 
-            langs = user_language_settings.get(key, ["en"])
-
-            current_usage = group_usage.get(group_id, 0)
-            if current_usage >= FREE_LIMIT:
-                reply_to_line(reply_token, [{"type": "text", "text": "免費翻譯已達上限，請升級使用。"}])
-                continue
-
-            total_length = current_usage + len(user_text)
-            if total_length > FREE_LIMIT:
-                reply_to_line(reply_token, [{"type": "text", "text": "免費翻譯額度不足，請升級。"}])
-                continue
+            langs = user_language_settings.get(key, [])
+            profile_res = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}",
+                                       headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"})
+            profile_data = profile_res.json()
+            user_name = profile_data.get("displayName", "User")
+            user_avatar = profile_data.get("pictureUrl", "")
 
             messages = []
-            for lang in langs:
-                translated = translate(user_text, lang)
-                messages.append({"type": "text", "text": f"[{lang.upper()}] {translated}"})
+            usage = user_usage_count.get(user_id, 0)
+            if usage >= 5000:
+                messages.append({"type": "text", "text": "⚠️ 您的免費翻譯額度已用完，請升級付費繼續使用。"})
+            else:
+                for lang in langs:
+                    if usage + len(user_text) > 5000:
+                        messages.append({"type": "text", "text": "⚠️ 您的免費翻譯額度已用完，請升級付費繼續使用。"})
+                        break
+                    translated_text = translate(user_text, lang)
+                    usage += len(user_text)
+                    messages.append({
+                        "type": "text",
+                        "text": translated_text,
+                        "sender": {"name": f"{user_name} ({lang})", "iconUrl": user_avatar}
+                    })
+                user_usage_count[user_id] = usage
 
-            group_usage[group_id] = total_length
             reply_to_line(reply_token, messages)
 
     return "OK", 200
