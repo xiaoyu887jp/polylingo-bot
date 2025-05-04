@@ -7,7 +7,6 @@ LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i8
 GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
 user_language_settings = {}
-user_usage_count = {}
 
 LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
 
@@ -70,22 +69,13 @@ def callback():
             user_avatar = profile_data.get("pictureUrl", "")
 
             messages = []
-            usage = user_usage_count.get(user_id, 0)
-            if usage >= 5000:
-                messages.append({"type": "text", "text": "⚠️ 您的免費翻譯額度已用完，請升級付費繼續使用。"})
-            else:
-                for lang in langs:
-                    if usage + len(user_text) > 5000:
-                        messages.append({"type": "text", "text": "⚠️ 您的免費翻譯額度已用完，請升級付費繼續使用。"})
-                        break
-                    translated_text = translate(user_text, lang)
-                    usage += len(user_text)
-                    messages.append({
-                        "type": "text",
-                        "text": translated_text,
-                        "sender": {"name": f"{user_name} ({lang})", "iconUrl": user_avatar}
-                    })
-                user_usage_count[user_id] = usage
+            for lang in langs:
+                translated_text = translate(user_text, lang)
+                messages.append({
+                    "type": "text",
+                    "text": translated_text,
+                    "sender": {"name": f"{user_name} ({lang})", "iconUrl": user_avatar}
+                })
 
             reply_to_line(reply_token, messages)
 
