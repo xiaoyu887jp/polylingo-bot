@@ -22,6 +22,14 @@ flex_message_json = {
         {"type": "button", "style": "primary", "color": "#FFCC00", "action": {"type": "message", "label": "🇹🇭 ภาษาไทย", "text": "th"}},
         {"type": "button", "style": "primary", "color": "#FF9933", "action": {"type": "message", "label": "🇻🇳 Tiếng Việt", "text": "vi"}},
         {"type": "button", "style": "primary", "color": "#33CCCC", "action": {"type": "message", "label": "🇫🇷 Français", "text": "fr"}},
+        {"type": "button", "style": "primary", "color": "#33CC66", "action": {"type": "message", "label": "🇪🇸 Español", "text": "es"}},
+        {"type": "button", "style": "primary", "color": "#3399FF", "action": {"type": "message", "label": "🇩🇪 Deutsch", "text": "de"}},
+        {"type": "button", "style": "primary", "color": "#4CAF50", "action": {"type": "message", "label": "🇮🇩 Bahasa Indonesia", "text": "id"}},
+        {"type": "button", "style": "primary", "color": "#FF6666", "action": {"type": "message", "label": "🇮🇳 हिन्दी", "text": "hi"}},
+        {"type": "button", "style": "primary", "color": "#66CC66", "action": {"type": "message", "label": "🇮🇹 Italiano", "text": "it"}},
+        {"type": "button", "style": "primary", "color": "#FF9933", "action": {"type": "message", "label": "🇵🇹 Português", "text": "pt"}},
+        {"type": "button", "style": "primary", "color": "#9966CC", "action": {"type": "message", "label": "🇷🇺 Русский", "text": "ru"}},
+        {"type": "button", "style": "primary", "color": "#CC3300", "action": {"type": "message", "label": "🇸🇦 العربية", "text": "ar"}},
         {"type": "button", "style": "secondary", "action": {"type": "message", "label": "🔄 Reset", "text": "/resetlang"}}
     ]}
 }
