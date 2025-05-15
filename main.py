@@ -3,7 +3,10 @@ import requests
 
 app = Flask(__name__)
 
+# 你的 LINE 密钥（与原程序一致）
 LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
+
+# 你的 Google Translate API 密钥（与原程序一致）
 GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
 user_language_settings = {}
@@ -32,21 +35,26 @@ def mark_as_read(event_id):
 def callback():
     events = request.get_json().get("events", [])
     for event in events:
-        event_id = event["webhookEventId"]
+        event_id = event.get("webhookEventId")
         mark_as_read(event_id)
 
-        reply_token = event["replyToken"]
-        source = event["source"]
+        reply_token = event.get("replyToken")
+        if not reply_token:
+            continue  # 防止KeyError
+
+        source = event.get("source", {})
         group_id = source.get("groupId", "private")
         user_id = source.get("userId", "unknown")
         key = f"{group_id}_{user_id}"
 
-        if event["type"] == "join":
+        event_type = event.get("type")
+
+        if event_type == "join":
             user_language_settings[key] = []
             reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
             continue
 
-        if event["type"] == "message" and event["message"]["type"] == "text":
+        if event_type == "message" and event["message"].get("type") == "text":
             user_text = event["message"]["text"]
 
             if user_text == "/resetlang":
@@ -62,6 +70,10 @@ def callback():
                 continue
 
             langs = user_language_settings.get(key, [])
+            if not langs:
+                reply_to_line(reply_token, [{"type": "text", "text": "⚠️ Please select a language first."}])
+                continue
+
             profile_res = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}",
                                        headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"})
             profile_data = profile_res.json()
