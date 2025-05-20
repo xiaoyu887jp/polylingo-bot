@@ -40,6 +40,16 @@ flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical",
     {"type":"button","style":"primary","color":"#FF6666","action":{"type":"message","label":"🇯🇵 日本語","text":"ja"}},
     {"type":"button","style":"primary","color":"#9966CC","action":{"type":"message","label":"🇰🇷 한국어","text":"ko"}},
     {"type":"button","style":"primary","color":"#FFCC00","action":{"type":"message","label":"🇹🇭 ภาษาไทย","text":"th"}},
+    {"type":"button","style":"primary","color":"#FF9933","action":{"type":"message","label":"🇻🇳 Tiếng Việt","text":"vi"}},
+    {"type":"button","style":"primary","color":"#33CCCC","action":{"type":"message","label":"🇫🇷 Français","text":"fr"}},
+    {"type":"button","style":"primary","color":"#33CC66","action":{"type":"message","label":"🇪🇸 Español","text":"es"}},
+    {"type":"button","style":"primary","color":"#3399FF","action":{"type":"message","label":"🇩🇪 Deutsch","text":"de"}},
+    {"type":"button","style":"primary","color":"#4CAF50","action":{"type":"message","label":"🇮🇩 Bahasa Indonesia","text":"id"}},
+    {"type":"button","style":"primary","color":"#FF6666","action":{"type":"message","label":"🇮🇳 हिन्दी","text":"hi"}},
+    {"type":"button","style":"primary","color":"#66CC66","action":{"type":"message","label":"🇮🇹 Italiano","text":"it"}},
+    {"type":"button","style":"primary","color":"#FF9933","action":{"type":"message","label":"🇵🇹 Português","text":"pt"}},
+    {"type":"button","style":"primary","color":"#9966CC","action":{"type":"message","label":"🇷🇺 Русский","text":"ru"}},
+    {"type":"button","style":"primary","color":"#CC3300","action":{"type":"message","label":"🇸🇦 العربية","text":"ar"}},
     {"type":"button","style":"secondary","action":{"type":"message","label":"🔄 Reset","text":"/resetlang"}}
 ]}}
 
@@ -65,29 +75,6 @@ def callback():
             user_usage[user_id] = 0
             reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
             continue
-
-        if event["type"] == "message" and event["message"]["type"] == "text":
-            text = event["message"]["text"]
-            if text == "/resetlang":
-                user_language_settings[user_id] = []
-                reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
-                continue
-
-            if text in LANGUAGES:
-                user_language_settings[user_id] = [text]
-                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your language: {text}"}])
-                continue
-
-            lang = user_language_settings.get(user_id, ["en"])[0]
-            user_usage[user_id] += len(text)
-
-            if user_usage[user_id] > plans_quota["free"]:
-                reply_to_line(reply_token, [{"type": "text", "text": quota_messages[lang]}])
-                continue
-
-            profile = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}", headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}).json()
-            translated = translate(text, lang)
-            reply_to_line(reply_token, [{"type": "text", "text": translated, "sender": {"name": profile["displayName"], "iconUrl": profile["pictureUrl"]}}])
 
     return "OK", 200
 
