@@ -77,5 +77,68 @@ def callback():
 
     return "OK", 200
 
+@app.route("/callback", methods=["POST"])
+def callback():
+    events = request.get_json().get("events", [])
+    for event in events:
+        event_id = event["webhookEventId"]
+        mark_as_read(event_id)
+
+        reply_token = event.get("replyToken")
+        if not reply_token:
+            continue
+
+        source = event["source"]
+        group_id = source.get("groupId", "private")
+        user_id = source.get("userId", "unknown")
+        key = f"{group_id}_{user_id}"
+
+        if event["type"] == "join":
+            user_language_settings[key] = []
+            user_usage[user_id] = 0
+            reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
+            continue
+
+        if event["type"] == "message" and event["message"]["type"] == "text":
+            user_text = event["message"]["text"]
+
+            if user_text == "/resetlang":
+                user_language_settings[key] = []
+                reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
+                continue
+
+            if user_text in LANGUAGES:
+                user_language_settings.setdefault(key, [])
+                if user_text not in user_language_settings[key]:
+                    user_language_settings[key].append(user_text)
+                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(user_language_settings[key])}"}])
+                continue
+
+            user_usage.setdefault(user_id, 0)
+            if user_usage[user_id] + len(user_text) > plans_quota["free"]:
+                lang = user_language_settings[key][0] if user_language_settings[key] else "en"
+                quota_message = quota_messages.get(lang, quota_messages["en"])
+                reply_to_line(reply_token, [{"type": "text", "text": quota_message}])
+                continue
+
+            user_usage[user_id] += len(user_text)
+
+            langs = user_language_settings.get(key, [])
+            profile_res = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}",
+                                       headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"})
+            profile_data = profile_res.json()
+            user_name = profile_data.get("displayName", "User")
+            user_avatar = profile_data.get("pictureUrl", "")
+
+            messages = []
+            for lang in langs:
+                translated_text = translate(user_text, lang)
+                messages.append({"type": "text", "text": translated_text, "sender": {"name": f"{user_name} ({lang})", "iconUrl": user_avatar}})
+
+            reply_to_line(reply_token, messages)
+
+    return "OK", 200
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
+
