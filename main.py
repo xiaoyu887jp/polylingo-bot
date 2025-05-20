@@ -8,11 +8,9 @@ GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
 user_language_settings = {}
 user_usage = {}
-user_plan = {}
+plans_quota = {"free": 5000}
 
 LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
-
-plans_quota = {"free": 5000}
 
 quota_messages = {
     "en": "⚠️ Your free translation quota (5000 characters) has been exhausted. Subscribe here: https://polylingo-bot.onrender.com",
@@ -53,6 +51,7 @@ flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical",
     {"type":"button","style":"secondary","action":{"type":"message","label":"🔄 Reset","text":"/resetlang"}}
 ]}}
 
+# Keep the original translation and reply logic here.
 def reply_to_line(reply_token, messages):
     requests.post("https://api.line.me/v2/bot/message/reply",
                   headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}", "Content-Type": "application/json"},
