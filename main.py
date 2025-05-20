@@ -12,13 +12,7 @@ user_plan = {}
 
 LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
 
-plans_quota = {
-    "free": 5000,
-    "starter": 300000,
-    "basic": 1000000,
-    "pro": 2000000,
-    "expert": 4000000
-}
+plans_quota = {"free": 5000}
 
 quota_messages = {
     "en": "⚠️ Your free translation quota (5000 characters) has been exhausted. Subscribe here: https://polylingo-bot.onrender.com",
@@ -39,17 +33,23 @@ quota_messages = {
     "ar": "⚠️ لقد استنفدت حصة الترجمة المجانية (5000 حرف). اشترك هنا: https://polylingo-bot.onrender.com"
 }
 
-flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical","contents":[{"type":"text","text":"🌍 Please select translation language","weight":"bold","size":"lg","align":"center"}],"backgroundColor":"#FFCC80"},"body":{"type":"box","layout":"vertical","spacing":"sm","contents":[{"type":"button","style":"primary","color":"#4CAF50","action":{"type":"message","label":"🇺🇸 English","text":"en"}},{"type":"button","style":"primary","color":"#33CC66","action":{"type":"message","label":"🇨🇳 简体中文","text":"zh-cn"}},{"type":"button","style":"primary","color":"#3399FF","action":{"type":"message","label":"🇹🇼 繁體中文","text":"zh-tw"}},{"type":"button","style":"primary","color":"#FF6666","action":{"type":"message","label":"🇯🇵 日本語","text":"ja"}},{"type":"button","style":"primary","color":"#9966CC","action":{"type":"message","label":"🇰🇷 한국어","text":"ko"}},{"type":"button","style":"primary","color":"#FFCC00","action":{"type":"message","label":"🇹🇭 ภาษาไทย","text":"th"}},{"type":"button","style":"secondary","action":{"type":"message","label":"🔄 Reset","text":"/resetlang"}}]}}
-
-session = requests.Session()
+flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical","contents":[{"type":"text","text":"🌍 Please select translation language","weight":"bold","size":"lg","align":"center"}],"backgroundColor":"#FFCC80"},"body":{"type":"box","layout":"vertical","spacing":"sm","contents":[
+    {"type":"button","style":"primary","color":"#4CAF50","action":{"type":"message","label":"🇺🇸 English","text":"en"}},
+    {"type":"button","style":"primary","color":"#33CC66","action":{"type":"message","label":"🇨🇳 简体中文","text":"zh-cn"}},
+    {"type":"button","style":"primary","color":"#3399FF","action":{"type":"message","label":"🇹🇼 繁體中文","text":"zh-tw"}},
+    {"type":"button","style":"primary","color":"#FF6666","action":{"type":"message","label":"🇯🇵 日本語","text":"ja"}},
+    {"type":"button","style":"primary","color":"#9966CC","action":{"type":"message","label":"🇰🇷 한국어","text":"ko"}},
+    {"type":"button","style":"primary","color":"#FFCC00","action":{"type":"message","label":"🇹🇭 ภาษาไทย","text":"th"}},
+    {"type":"button","style":"secondary","action":{"type":"message","label":"🔄 Reset","text":"/resetlang"}}
+]}}
 
 def reply_to_line(reply_token, messages):
-    session.post("https://api.line.me/v2/bot/message/reply",
-                 headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}", "Content-Type": "application/json"},
-                 json={"replyToken": reply_token, "messages": messages})
+    requests.post("https://api.line.me/v2/bot/message/reply",
+                  headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}", "Content-Type": "application/json"},
+                  json={"replyToken": reply_token, "messages": messages})
 
 def translate(text, lang):
-    res = session.post(f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}",
+    res = requests.post(f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}",
                         json={"q": text, "target": lang, "format": "text"})
     return res.json()["data"]["translations"][0]["translatedText"]
 
@@ -58,45 +58,36 @@ def callback():
     events = request.get_json().get("events", [])
     for event in events:
         reply_token = event.get("replyToken")
-        source = event["source"]
-        user_id = source.get("userId", "unknown")
-        key = user_id
+        user_id = event["source"].get("userId", "unknown")
 
         if event["type"] == "join":
-            user_language_settings[key] = []
-            user_usage[key] = 0
-            user_plan[key] = "free"
+            user_language_settings[user_id] = []
+            user_usage[user_id] = 0
             reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
             continue
 
         if event["type"] == "message" and event["message"]["type"] == "text":
-            user_text = event["message"]["text"]
-
-            if user_text == "/resetlang":
-                user_language_settings[key] = []
+            text = event["message"]["text"]
+            if text == "/resetlang":
+                user_language_settings[user_id] = []
                 reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
                 continue
 
-            if user_text in LANGUAGES:
-                user_language_settings[key] = [user_text]
-                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your language: {user_text}"}])
+            if text in LANGUAGES:
+                user_language_settings[user_id] = [text]
+                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your language: {text}"}])
                 continue
 
-            lang = user_language_settings.get(key, ["en"])[0]
-            user_usage[key] += len(user_text)
+            lang = user_language_settings.get(user_id, ["en"])[0]
+            user_usage[user_id] += len(text)
 
-            quota = plans_quota[user_plan.get(key, "free")]
-            if user_usage[key] > quota:
-                reply_to_line(reply_token, [{"type": "text", "text": quota_messages.get(lang, quota_messages["en"])}])
+            if user_usage[user_id] > plans_quota["free"]:
+                reply_to_line(reply_token, [{"type": "text", "text": quota_messages[lang]}])
                 continue
 
-            profile_res = session.get(f"https://api.line.me/v2/bot/profile/{user_id}", headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"})
-            profile_data = profile_res.json()
-            user_avatar = profile_data.get("pictureUrl", "")
-
-            translated_text = translate(user_text, lang)
-            messages = [{"type": "text", "text": translated_text, "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}}]
-            reply_to_line(reply_token, messages)
+            profile = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}", headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}).json()
+            translated = translate(text, lang)
+            reply_to_line(reply_token, [{"type": "text", "text": translated, "sender": {"name": profile["displayName"], "iconUrl": profile["pictureUrl"]}}])
 
     return "OK", 200
 
