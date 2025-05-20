@@ -39,7 +39,7 @@ quota_messages = {
     "ar": "⚠️ لقد استنفدت حصة الترجمة المجانية (5000 حرف). اشترك هنا: https://polylingo-bot.onrender.com"
 }
 
-flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical","contents":[{"type":"text","text":"🌍 Please select translation language","weight":"bold","size":"lg","align":"center"}],"backgroundColor":"#FFCC80"},"body":{"type":"box","layout":"vertical","spacing":"sm","contents":[{"type":"button","style":"primary","color":"#4CAF50","action":{"type":"message","label":"🇺🇸 English","text":"en"}},{"type":"button","style":"secondary","action":{"type":"message","label":"🔄 Reset","text":"/resetlang"}}]}}
+flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical","contents":[{"type":"text","text":"🌍 Please select translation language","weight":"bold","size":"lg","align":"center"}],"backgroundColor":"#FFCC80"},"body":{"type":"box","layout":"vertical","spacing":"sm","contents":[{"type":"button","style":"primary","color":"#4CAF50","action":{"type":"message","label":"🇺🇸 English","text":"en"}},{"type":"button","style":"primary","color":"#33CC66","action":{"type":"message","label":"🇨🇳 简体中文","text":"zh-cn"}},{"type":"button","style":"primary","color":"#3399FF","action":{"type":"message","label":"🇹🇼 繁體中文","text":"zh-tw"}},{"type":"button","style":"primary","color":"#FF6666","action":{"type":"message","label":"🇯🇵 日本語","text":"ja"}},{"type":"button","style":"primary","color":"#9966CC","action":{"type":"message","label":"🇰🇷 한국어","text":"ko"}},{"type":"button","style":"primary","color":"#FFCC00","action":{"type":"message","label":"🇹🇭 ภาษาไทย","text":"th"}},{"type":"button","style":"secondary","action":{"type":"message","label":"🔄 Reset","text":"/resetlang"}}]}}
 
 session = requests.Session()
 
@@ -90,8 +90,12 @@ def callback():
                 reply_to_line(reply_token, [{"type": "text", "text": quota_messages.get(lang, quota_messages["en"])}])
                 continue
 
+            profile_res = session.get(f"https://api.line.me/v2/bot/profile/{user_id}", headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"})
+            profile_data = profile_res.json()
+            user_avatar = profile_data.get("pictureUrl", "")
+
             translated_text = translate(user_text, lang)
-            messages = [{"type": "text", "text": translated_text, "sender": {"name": "Saygo"}}]
+            messages = [{"type": "text", "text": translated_text, "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}}]
             reply_to_line(reply_token, messages)
 
     return "OK", 200
