@@ -81,7 +81,7 @@ if event["type"] == "join":
         "altText": "Select language",
         "contents": flex_message_json
     }])
-    continue
+        continue
 
 if event["type"] == "message" and event["message"]["type"] == "text":
     text = event["message"]["text"]
