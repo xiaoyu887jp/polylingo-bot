@@ -1,5 +1,5 @@
 from flask import Flask, request
-import requests
+import requests, os
 
 app = Flask(__name__)
 
@@ -14,8 +14,8 @@ LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "
 
 quota_messages = {
     "en": "⚠️ Your free translation quota (5000 characters) has been exhausted. Subscribe here: https://polylingo-bot.onrender.com",
-    "zh-cn": "⚠️ 您的免费翻译额度（5000字）已用完。请点击订阅：https://polylingo-bot.onrender.com",
     "zh-tw": "⚠️ 您的免費翻譯額度（5000字）已使用完畢。請點擊訂閱：https://polylingo-bot.onrender.com",
+    "zh-cn": "⚠️ 您的免费翻译额度（5000字）已用完。请点击订阅：https://polylingo-bot.onrender.com",
     "ja": "⚠️ 無料翻訳枠（5000文字）を使い切りました。登録はこちら：https://polylingo-bot.onrender.com",
     "ko": "⚠️ 무료 번역 한도(5000자)를 초과했습니다. 구독하기: https://polylingo-bot.onrender.com",
     "th": "⚠️ คุณใช้โควต้าการแปลฟรี (5000 ตัวอักษร) หมดแล้ว สมัครที่นี่: https://polylingo-bot.onrender.com",
@@ -46,14 +46,16 @@ def callback():
     events = request.get_json().get("events", [])
     for event in events:
         reply_token = event.get("replyToken")
+        if not reply_token:
+            continue
+
         source = event["source"]
-        group_id = source.get("groupId", "private")
         user_id = source.get("userId", "unknown")
-        key = f"{group_id}_{user_id}"
+        key = user_id
 
         if event["type"] == "join":
             user_language_settings[key] = []
-            user_usage[user_id] = 0
+            user_usage[key] = 0
             reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
             continue
 
@@ -66,28 +68,26 @@ def callback():
                 continue
 
             if user_text in LANGUAGES:
-                user_language_settings.setdefault(key, [])
                 if user_text not in user_language_settings[key]:
                     user_language_settings[key].append(user_text)
                 reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(user_language_settings[key])}"}])
                 continue
 
-            user_usage.setdefault(user_id, 0)
-            if user_usage[user_id] + len(user_text) > MONTHLY_FREE_QUOTA:
+            if user_usage[key] + len(user_text) > MONTHLY_FREE_QUOTA:
                 lang = user_language_settings[key][0] if user_language_settings[key] else "en"
                 quota_message = quota_messages.get(lang, quota_messages["en"])
                 reply_to_line(reply_token, [{"type": "text", "text": quota_message}])
                 continue
 
-            user_usage[user_id] += len(user_text)
-            langs = user_language_settings.get(key, [])
+            user_usage[key] += len(user_text)
             profile = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}", headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}).json()
             user_avatar = profile.get("pictureUrl", "")
 
-            messages = [{"type": "text", "text": translate(user_text, lang), "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}} for lang in langs]
+            messages = [{"type": "text", "text": translate(user_text, lang), "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}} for lang in user_language_settings[key]]
             reply_to_line(reply_token, messages)
 
     return "OK", 200
-            if __name__ == "__main__":
-              port = int(os.getenv("PORT", 10000))
-              app.run(host="0.0.0.0", port=port)
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
