@@ -5,27 +5,7 @@ from datetime import datetime
 app = Flask(__name__)
 
 LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
-GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80oY"
-
-flex_message_json = {"type": "bubble", "header": {"type": "box", "layout": "vertical", "contents": [{"type": "text", "text": "🌍 Please select translation language", "weight": "bold", "size": "lg", "align": "center"}], "backgroundColor": "#FFCC80"}, "body": {"type": "box", "layout": "vertical", "spacing": "sm", "contents": [
-    {"type": "button", "style": "primary", "action": {"type": "message", "label": "🇺🇸 English", "text": "en"}},
-    {"type": "button", "style": "primary", "action": {"type": "message", "label": "🇨🇳 简体中文", "text": "zh-cn"}},
-    {"type": "button", "style": "primary", "action": {"type": "message", "label": "🇹🇼 繁體中文", "text": "zh-tw"}},
-    {"type": "button", "style": "primary", "action": {"type": "message", "label": "🇯🇵 日本語", "text": "ja"}},
-    {"type": "button", "style": "primary", "action": {"type": "message", "label": "🇰🇷 한국어", "text": "ko"}},
-    {"type": "button", "style": "primary", "action": {"type": "message", "label": "🇹🇭 ภาษาไทย", "text": "th"}},
-    {"type": "button", "style": "primary", "action": {"type": "message", "label": "🇻🇳 Tiếng Việt", "text": "vi"}},
-    {"type": "button", "style": "primary", "action": {"type": "message", "label": "🇫🇷 Français", "text": "fr"}},
-    {"type": "button", "style": "primary", "action": {"type": "message", "label": "🇪🇸 Español", "text": "es"}},
-    {"type": "button", "style": "primary", "action": {"type": "message", "label": "🇩🇪 Deutsch", "text": "de"}},
-    {"type": "button", "style": "primary", "action": {"type": "message", "label": "🇮🇩 Bahasa Indonesia", "text": "id"}},
-    {"type": "button", "style": "primary", "action": {"type": "message", "label": "🇮🇳 हिन्दी", "text": "hi"}},
-    {"type": "button", "style": "primary", "action": {"type": "message", "label": "🇮🇹 Italiano", "text": "it"}},
-    {"type": "button", "style": "primary", "action": {"type": "message", "label": "🇵🇹 Português", "text": "pt"}},
-    {"type": "button", "style": "primary", "action": {"type": "message", "label": "🇷🇺 Русский", "text": "ru"}},
-    {"type": "button", "style": "primary", "action": {"type": "message", "label": "🇸🇦 العربية", "text": "ar"}},
-    {"type": "button", "style": "secondary", "action": {"type": "message", "label": "🔄 Reset", "text": "/resetlang"}}
-]}}
+GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
 user_language_settings = {}
 user_quota = {}
@@ -52,21 +32,30 @@ quota_messages = {
     "ar": "⚠️ لقد استنفدت حصة الترجمة المجانية (5000 حرف). اشترك هنا: https://polylingo-bot.onrender.com"
 }
 
+# Helper functions
 def reply_to_line(reply_token, messages):
-    requests.post("https://api.line.me/v2/bot/message/reply", headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}", "Content-Type": "application/json"}, json={"replyToken": reply_token, "messages": messages})
+    requests.post("https://api.line.me/v2/bot/message/reply",
+                  headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}", "Content-Type": "application/json"},
+                  json={"replyToken": reply_token, "messages": messages})
 
 def translate(text, lang):
-    res = requests.post(f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}", json={"q": text, "target": lang, "format": "text"})
-    return res.json()["data"]["translations"][0]["translatedText"]
+    res = requests.post(f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}",
+                        json={"q": text, "target": lang, "format": "text"})
+    result = res.json()
+    if "data" in result:
+        return result["data"]["translations"][0]["translatedText"]
+    return "[Translation error]"
 
 @app.route("/callback", methods=["POST"])
 def callback():
     events = request.get_json().get("events", [])
     for event in events:
         reply_token = event.get("replyToken")
-        source = event["source"]
-        user_id = source.get("userId")
-        group_id = source.get("groupId", "private")
+        if not reply_token:
+            continue
+
+        user_id = event["source"].get("userId")
+        group_id = event["source"].get("groupId", "private")
         key = f"{group_id}_{user_id}_{datetime.now().strftime('%Y%m')}"
 
         if event["type"] == "join":
@@ -75,36 +64,27 @@ def callback():
             continue
 
         if event["type"] == "message" and event["message"]["type"] == "text":
-            user_text = event["message"]["text"]
+            text = event["message"]["text"]
 
-            if user_text == "/resetlang":
-                user_language_settings[key] = []
-                reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
+            if text in LANGUAGES:
+                user_language_settings.setdefault(key, []).append(text)
+                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Languages set: {', '.join(user_language_settings[key])}"}])
                 continue
 
-            if user_text in LANGUAGES:
-                user_language_settings.setdefault(key, [])
-                if user_text not in user_language_settings[key]:
-                    user_language_settings[key].append(user_text)
-                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(user_language_settings[key])}"}])
-                continue
-
-            chars_used = user_quota.get(key, 0)
-            if chars_used + len(user_text) > monthly_limit:
+            if user_quota.get(key, 0) + len(text) > monthly_limit:
                 langs = user_language_settings.get(key, ["en"])
-                messages = [{"type": "text", "text": quota_messages.get(lang, quota_messages["en"])} for lang in langs]
-                reply_to_line(reply_token, messages)
+                msgs = [{"type": "text", "text": quota_messages[lang]} for lang in langs]
+                reply_to_line(reply_token, msgs)
                 continue
 
-            user_quota[key] = chars_used + len(user_text)
-            profile_res = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}", headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"})
-            profile_data = profile_res.json()
-            user_avatar = profile_data.get("pictureUrl", "")
+            user_quota[key] = user_quota.get(key, 0) + len(text)
+            profile = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}",
+                                   headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}).json()
+            user_avatar = profile.get("pictureUrl", "")
 
-            messages = []
-            for lang in user_language_settings.get(key, []):
-                translated_text = translate(user_text, lang)
-                messages.append({"type": "text", "text": translated_text, "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}})
+            messages = [{"type": "text", "text": translate(text, lang),
+                         "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}}
+                        for lang in user_language_settings.get(key, [])]
 
             reply_to_line(reply_token, messages)
 
