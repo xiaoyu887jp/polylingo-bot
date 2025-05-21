@@ -1,5 +1,6 @@
 from flask import Flask, request
-import requests, os
+import requests
+import os
 
 app = Flask(__name__)
 
@@ -8,6 +9,7 @@ GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
 user_language_settings = {}
 user_usage = {}
+
 MONTHLY_FREE_QUOTA = 5000
 
 LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
@@ -31,6 +33,8 @@ quota_messages = {
     "ar": "⚠️ لقد استنفدت حصة الترجمة المجانية (5000 حرف). اشترك هنا: https://polylingo-bot.onrender.com"
 }
 
+# (flex_message_json and other functions unchanged)
+
 def reply_to_line(reply_token, messages):
     requests.post("https://api.line.me/v2/bot/message/reply",
                   headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}", "Content-Type": "application/json"},
@@ -50,12 +54,12 @@ def callback():
             continue
 
         source = event["source"]
+        group_id = source.get("groupId", "private")
         user_id = source.get("userId", "unknown")
-        key = user_id
+        key = f"{group_id}_{user_id}"
 
         if event["type"] == "join":
             user_language_settings[key] = []
-            user_usage[key] = 0
             reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
             continue
 
@@ -68,22 +72,27 @@ def callback():
                 continue
 
             if user_text in LANGUAGES:
+                user_language_settings.setdefault(key, [])
                 if user_text not in user_language_settings[key]:
                     user_language_settings[key].append(user_text)
                 reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(user_language_settings[key])}"}])
                 continue
 
-            if user_usage[key] + len(user_text) > MONTHLY_FREE_QUOTA:
+            user_usage.setdefault(user_id, 0)
+            if user_usage[user_id] + len(user_text) > MONTHLY_FREE_QUOTA:
                 lang = user_language_settings[key][0] if user_language_settings[key] else "en"
                 quota_message = quota_messages.get(lang, quota_messages["en"])
                 reply_to_line(reply_token, [{"type": "text", "text": quota_message}])
                 continue
 
-            user_usage[key] += len(user_text)
-            profile = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}", headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}).json()
-            user_avatar = profile.get("pictureUrl", "")
+            user_usage[user_id] += len(user_text)
+            langs = user_language_settings.get(key, [])
+            profile_res = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}",
+                                       headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"})
+            profile_data = profile_res.json()
+            user_avatar = profile_data.get("pictureUrl", "")
 
-            messages = [{"type": "text", "text": translate(user_text, lang), "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}} for lang in user_language_settings[key]]
+            messages = [{"type": "text", "text": translate(user_text, lang), "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}} for lang in langs]
             reply_to_line(reply_token, messages)
 
     return "OK", 200
