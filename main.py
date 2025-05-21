@@ -32,23 +32,6 @@ quota_messages = {
     "ar": "⚠️ لقد استنفدت حصة الترجمة المجانية (5000 حرف). اشترك هنا: https://polylingo-bot.onrender.com"
 }
 
-flex_message_json = {
-    "type": "bubble",
-    "header": {
-        "type": "box",
-        "layout": "vertical",
-        "contents": [{"type": "text", "text": "🌍 Please select translation language", "weight": "bold", "size": "lg", "align": "center"}],
-        "backgroundColor": "#FFCC80"
-    },
-    "body": {
-        "type": "box",
-        "layout": "vertical",
-        "spacing": "sm",
-        "contents": [{"type": "button", "style": "primary", "action": {"type": "message", "label": f"{lang}", "text": lang}} for lang in LANGUAGES] +
-                    [{"type": "button", "style": "secondary", "action": {"type": "message", "label": "🔄 Reset", "text": "/resetlang"}}]
-    }
-}
-
 def reply_to_line(reply_token, messages):
     requests.post("https://api.line.me/v2/bot/message/reply",
                   headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}", "Content-Type": "application/json"},
@@ -74,45 +57,41 @@ def callback():
         group_id = event["source"].get("groupId", "private")
         key = f"{group_id}_{user_id}_{datetime.now().strftime('%Y%m')}"
 
-if event["type"] == "join":
-    user_language_settings[key] = []
-    reply_to_line(reply_token, [{
-        "type": "flex",
-        "altText": "Select language",
-        "contents": flex_message_json
-    }])
-        continue
+        if event["type"] == "join":
+            user_language_settings[key] = []
+            reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
+            continue
 
-if event["type"] == "message" and event["message"]["type"] == "text":
-    text = event["message"]["text"]
+        if event["type"] == "message" and event["message"]["type"] == "text":
+            text = event["message"]["text"]
 
-    if text == "/resetlang":
-        user_language_settings[key] = []
-        reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
-        continue
+            if text == "/resetlang":
+                user_language_settings[key] = []
+                reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
+                continue
 
-    if text in LANGUAGES:
-        user_language_settings.setdefault(key, []).append(text)
-        reply_to_line(reply_token, [{"type": "text", "text": f"✅ Languages set: {', '.join(user_language_settings[key])}"}])
-        continue
-    if user_quota.get(key, 0) + len(text) > monthly_limit:
-        msgs = [{"type": "text", "text": quota_messages[lang]} for lang in user_language_settings.get(key, ["en"])]
-        reply_to_line(reply_token, msgs)
-        continue
+            if text in LANGUAGES:
+                user_language_settings.setdefault(key, []).append(text)
+                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Languages set: {', '.join(user_language_settings[key])}"}])
+                continue
 
-    user_quota[key] = user_quota.get(key, 0) + len(text)
+            if user_quota.get(key, 0) + len(text) > monthly_limit:
+                msgs = [{"type": "text", "text": quota_messages[lang]} for lang in user_language_settings.get(key, ["en"])]
+                reply_to_line(reply_token, msgs)
+                continue
 
-    profile = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}",
-                           headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}).json()
-    user_avatar = profile.get("pictureUrl", "")
+            user_quota[key] = user_quota.get(key, 0) + len(text)
+            profile = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}",
+                                   headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}).json()
+            user_avatar = profile.get("pictureUrl", "")
 
-    messages = [{"type": "text", "text": translate(text, lang),
-                 "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}}
-                for lang in user_language_settings.get(key, ["en"])]
+            messages = [{"type": "text", "text": translate(text, lang),
+                         "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}}
+                        for lang in user_language_settings.get(key, ["en"])]
 
-    reply_to_line(reply_token, messages)
+            reply_to_line(reply_token, messages)
 
-return "OK", 200
+    return "OK", 200
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
-
