@@ -6,6 +6,29 @@ app = Flask(__name__)
 
 LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
 GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80oY"
+flex_message_json = {
+    "type": "bubble",
+    "header": {"type": "box", "layout": "vertical", "contents": [{"type": "text", "text": "🌍 Please select translation language", "weight": "bold", "size": "lg", "align": "center"}], "backgroundColor": "#FFCC80"},
+    "body": {"type": "box", "layout": "vertical", "spacing": "sm", "contents": [
+        {"type": "button", "style": "primary", "color": "#4CAF50", "action": {"type": "message", "label": "🇺🇸 English", "text": "en"}},
+        {"type": "button", "style": "primary", "color": "#33CC66", "action": {"type": "message", "label": "🇨🇳 简体中文", "text": "zh-cn"}},
+        {"type": "button", "style": "primary", "color": "#3399FF", "action": {"type": "message", "label": "🇹🇼 繁體中文", "text": "zh-tw"}},
+        {"type": "button", "style": "primary", "color": "#FF6666", "action": {"type": "message", "label": "🇯🇵 日本語", "text": "ja"}},
+        {"type": "button", "style": "primary", "color": "#9966CC", "action": {"type": "message", "label": "🇰🇷 한국어", "text": "ko"}},
+        {"type": "button", "style": "primary", "color": "#FFCC00", "action": {"type": "message", "label": "🇹🇭 ภาษาไทย", "text": "th"}},
+        {"type": "button", "style": "primary", "color": "#FF9933", "action": {"type": "message", "label": "🇻🇳 Tiếng Việt", "text": "vi"}},
+        {"type": "button", "style": "primary", "color": "#33CCCC", "action": {"type": "message", "label": "🇫🇷 Français", "text": "fr"}},
+        {"type": "button", "style": "primary", "color": "#33CC66", "action": {"type": "message", "label": "🇪🇸 Español", "text": "es"}},
+        {"type": "button", "style": "primary", "color": "#3399FF", "action": {"type": "message", "label": "🇩🇪 Deutsch", "text": "de"}},
+        {"type": "button", "style": "primary", "color": "#4CAF50", "action": {"type": "message", "label": "🇮🇩 Bahasa Indonesia", "text": "id"}},
+        {"type": "button", "style": "primary", "color": "#FF6666", "action": {"type": "message", "label": "🇮🇳 हिन्दी", "text": "hi"}},
+        {"type": "button", "style": "primary", "color": "#66CC66", "action": {"type": "message", "label": "🇮🇹 Italiano", "text": "it"}},
+        {"type": "button", "style": "primary", "color": "#FF9933", "action": {"type": "message", "label": "🇵🇹 Português", "text": "pt"}},
+        {"type": "button", "style": "primary", "color": "#9966CC", "action": {"type": "message", "label": "🇷🇺 Русский", "text": "ru"}},
+        {"type": "button", "style": "primary", "color": "#CC3300", "action": {"type": "message", "label": "🇸🇦 العربية", "text": "ar"}},
+        {"type": "button", "style": "secondary", "action": {"type": "message", "label": "🔄 Reset", "text": "/resetlang"}}
+    ]}
+}
 
 user_language_settings = {}
 user_quota = {}
