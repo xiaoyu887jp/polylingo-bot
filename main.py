@@ -1,6 +1,5 @@
 from flask import Flask, request
 import requests
-from datetime import datetime
 
 app = Flask(__name__)
 
@@ -8,8 +7,8 @@ LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i8
 GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
 
 user_language_settings = {}
-user_quota = {}
-monthly_limit = 5000
+user_usage = {}
+MONTHLY_FREE_QUOTA = 5000
 
 LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
 
@@ -40,58 +39,52 @@ def reply_to_line(reply_token, messages):
 def translate(text, lang):
     res = requests.post(f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}",
                         json={"q": text, "target": lang, "format": "text"})
-    result = res.json()
-    if "data" in result:
-        return result["data"]["translations"][0]["translatedText"]
-    return "[Translation Error]"
+    return res.json()["data"]["translations"][0]["translatedText"]
 
 @app.route("/callback", methods=["POST"])
 def callback():
     events = request.get_json().get("events", [])
     for event in events:
         reply_token = event.get("replyToken")
-        if not reply_token:
-            continue
-
-        user_id = event["source"].get("userId")
-        group_id = event["source"].get("groupId", "private")
-        key = f"{group_id}_{user_id}_{datetime.now().strftime('%Y%m')}"
+        source = event["source"]
+        group_id = source.get("groupId", "private")
+        user_id = source.get("userId", "unknown")
+        key = f"{group_id}_{user_id}"
 
         if event["type"] == "join":
             user_language_settings[key] = []
+            user_usage[user_id] = 0
             reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
             continue
 
         if event["type"] == "message" and event["message"]["type"] == "text":
-            text = event["message"]["text"]
+            user_text = event["message"]["text"]
 
-            if text == "/resetlang":
+            if user_text == "/resetlang":
                 user_language_settings[key] = []
                 reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
                 continue
 
-            if text in LANGUAGES:
-                user_language_settings.setdefault(key, []).append(text)
-                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Languages set: {', '.join(user_language_settings[key])}"}])
+            if user_text in LANGUAGES:
+                user_language_settings.setdefault(key, [])
+                if user_text not in user_language_settings[key]:
+                    user_language_settings[key].append(user_text)
+                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(user_language_settings[key])}"}])
                 continue
 
-            if user_quota.get(key, 0) + len(text) > monthly_limit:
-                msgs = [{"type": "text", "text": quota_messages[lang]} for lang in user_language_settings.get(key, ["en"])]
-                reply_to_line(reply_token, msgs)
+            user_usage.setdefault(user_id, 0)
+            if user_usage[user_id] + len(user_text) > MONTHLY_FREE_QUOTA:
+                lang = user_language_settings[key][0] if user_language_settings[key] else "en"
+                quota_message = quota_messages.get(lang, quota_messages["en"])
+                reply_to_line(reply_token, [{"type": "text", "text": quota_message}])
                 continue
 
-            user_quota[key] = user_quota.get(key, 0) + len(text)
-            profile = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}",
-                                   headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}).json()
+            user_usage[user_id] += len(user_text)
+            langs = user_language_settings.get(key, [])
+            profile = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}", headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}).json()
             user_avatar = profile.get("pictureUrl", "")
 
-            messages = [{"type": "text", "text": translate(text, lang),
-                         "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}}
-                        for lang in user_language_settings.get(key, ["en"])]
-
+            messages = [{"type": "text", "text": translate(user_text, lang), "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}} for lang in langs]
             reply_to_line(reply_token, messages)
 
     return "OK", 200
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
