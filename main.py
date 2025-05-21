@@ -72,7 +72,7 @@ def callback():
 
         user_id = event["source"].get("userId")
         group_id = event["source"].get("groupId", "private")
-      key = f"{group_id}_{user_id}_{datetime.now().strftime('%Y%m')}"
+        key = f"{group_id}_{user_id}_{datetime.now().strftime('%Y%m')}"
 
 if event["type"] == "join":
     user_language_settings[key] = []
