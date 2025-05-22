@@ -74,7 +74,8 @@ quota_messages = {
 
 def reply_to_line(reply_token, messages):
     requests.post("https://api.line.me/v2/bot/message/reply",
-                  headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}", "Content-Type": "application/json"},
+                  headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}", 
+                           "Content-Type": "application/json; charset=UTF-8"},
                   json={"replyToken": reply_token, "messages": messages})
 
 def translate(text, lang):
