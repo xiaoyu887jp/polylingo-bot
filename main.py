@@ -112,4 +112,7 @@ def callback():
 
             reply_to_line(reply_token, messages)
 
-    return "OK", 200
+    if __name__ == "__main__":
+    port = int(os.getenv("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
