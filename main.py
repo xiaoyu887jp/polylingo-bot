@@ -49,7 +49,8 @@ flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical",
     {"type":"button","style":"primary","color":"#9966CC","action":{"type":"message","label":"🇷🇺 Русский","text":"ru"}},
     {"type":"button","style":"primary","color":"#CC3300","action":{"type":"message","label":"🇸🇦 العربية","text":"ar"}},
     {"type":"button","style":"secondary","action":{"type":"message","label":"🔄 Reset","text":"/resetlang"}}
-]}
+  ]}
+}
 
 def reply_to_line(reply_token, messages):
     requests.post("https://api.line.me/v2/bot/message/reply",
