@@ -105,8 +105,24 @@ def callback():
                 continue
 
             user_usage[key] += len(user_text)
-            profile = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}", headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}).json()
-            messages = [{"type": "text", "text": translate(user_text, lang), "sender": {"name": profile["displayName"], "iconUrl": profile["pictureUrl"]}} for lang in langs]
+profile = requests.get(
+    f"https://api.line.me/v2/bot/profile/{user_id}", 
+    headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
+).json()
+
+user_avatar = profile["pictureUrl"]
+
+# 统一显示名字为 Saygo + 语言代码
+messages = [
+    {
+        "type": "text",
+        "text": translate(user_text, lang),
+        "sender": {"name": f"Saygo {lang.upper()}", "iconUrl": user_avatar}
+    } for lang in langs
+]
+
+reply_to_line(reply_token, messages)
+
             reply_to_line(reply_token, messages)
 
 if __name__ == "__main__":
