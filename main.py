@@ -52,6 +52,16 @@ flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical",
   ]}
 }
 
+def reply_to_line(reply_token, messages):
+    headers = {"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
+    requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json={"replyToken": reply_token, "messages": messages})
+
+def translate(text, target_language):
+    url = f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}"
+    data = {"q": text, "target": target_language}
+    response = requests.post(url, json=data)
+    return response.json()["data"]["translations"][0]["translatedText"]
+
 @app.route("/callback", methods=["POST"])
 def callback():
     events = request.get_json().get("events", [])
@@ -65,29 +75,22 @@ def callback():
         user_id = source.get("userId", "unknown")
         key = f"{group_id}_{user_id}"
 
-        # 加入群组时，仅首次出现一张卡片
         if event["type"] == "join":
-            if key not in user_language_settings:
-                user_language_settings[key] = []
-                reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
+            user_language_settings[key] = []
+            reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
             continue
 
-        # 消息事件
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"]
 
-            # 重置语言命令
             if user_text == "/resetlang":
                 user_language_settings[key] = []
                 reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
                 continue
 
-            # 用户选择语言时，仅确认语言，不再弹出卡片
             if user_text in LANGUAGES:
-                if user_text not in user_language_settings.get(key, []):
-                    user_language_settings.setdefault(key, []).append(user_text)
-                languages_list = ', '.join(user_language_settings[key])
-                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {languages_list}"}])
+                user_language_settings.setdefault(key, []).append(user_text)
+                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(user_language_settings[key])}"}])
                 continue
 
             langs = user_language_settings.get(key, [])
@@ -95,24 +98,17 @@ def callback():
                 reply_to_line(reply_token, [{"type": "text", "text": "⚠️ Please set your language first using /resetlang."}])
                 continue
 
-            profile_res = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}",
-                                       headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"})
-            profile_data = profile_res.json()
-            user_name = profile_data.get("displayName", "User")
-            user_avatar = profile_data.get("pictureUrl", "")
+            user_usage.setdefault(key, 0)
+            if user_usage[key] + len(user_text) > MONTHLY_FREE_QUOTA:
+                lang = langs[0] if langs else "en"
+                reply_to_line(reply_token, [{"type": "text", "text": quota_messages.get(lang, quota_messages["en"])}])
+                continue
 
-            messages = []
-            for lang in langs:
-                translated_text = translate(user_text, lang)
-                messages.append({
-                    "type": "text",
-                    "text": translated_text,
-                    "sender": {"name": f"{user_name} ({lang})", "iconUrl": user_avatar}
-                })
-
+            user_usage[key] += len(user_text)
+            profile = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}", headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}).json()
+            messages = [{"type": "text", "text": translate(user_text, lang), "sender": {"name": profile["displayName"], "iconUrl": profile["pictureUrl"]}} for lang in langs]
             reply_to_line(reply_token, messages)
-            
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
