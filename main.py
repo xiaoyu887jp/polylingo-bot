@@ -122,8 +122,7 @@ messages = [
 ]
 
 reply_to_line(reply_token, messages)
-
-            reply_to_line(reply_token, messages)
+ reply_to_line(reply_token, messages)
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
