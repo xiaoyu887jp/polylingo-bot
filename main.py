@@ -62,7 +62,6 @@ def translate(text, target_language):
     response = requests.post(url, json=data)
     return response.json()["data"]["translations"][0]["translatedText"]
 
-@app.route("/callback", methods=["POST"])
 def callback():
     events = request.get_json().get("events", [])
     for event in events:
