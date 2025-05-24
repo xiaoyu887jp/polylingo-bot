@@ -120,7 +120,7 @@ def callback():
 
 # 统一显示名字为 Saygo + 语言代码
 @app.route("/callback", methods=['POST'])
-def callback():
+def line_callback():
     # 这里是处理数据的逻辑
     messages = [
         {
