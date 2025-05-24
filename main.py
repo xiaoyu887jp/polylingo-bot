@@ -130,9 +130,9 @@ messages = [
     } for lang in langs
 ]
 
-    reply_to_line(reply_token, messages)
+reply_to_line(reply_token, messages)
 
-    return 'OK', 200
+return 'OK', 200
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
