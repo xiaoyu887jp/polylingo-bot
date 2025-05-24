@@ -119,20 +119,24 @@ def callback():
     user_avatar = profile["pictureUrl"]
 
 # 统一显示名字为 Saygo + 语言代码
-messages = [
-    {
-        "type": "text",
-        "text": html.unescape(translate(user_text, lang)),
-        "sender": {
-            "name": f"Saygo {lang.upper()}",
-            "iconUrl": user_avatar
-        }
-    } for lang in langs
-]
+@app.route("/callback", methods=['POST'])
+def callback():
+    # 这里是处理数据的逻辑
+    messages = [
+        {
+            "type": "text",
+            "text": html.unescape(translate(user_text, lang)),
+            "sender": {
+                "name": f"Saygo {lang.upper()}",
+                "iconUrl": user_avatar
+            }
+        } for lang in langs
+    ]
 
-reply_to_line(reply_token, messages)
+    reply_to_line(reply_token, messages)
 
-return 'OK', 200
+    return 'OK', 200  # 这个return必须在函数体内
+
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
