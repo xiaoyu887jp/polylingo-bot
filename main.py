@@ -118,7 +118,8 @@ def callback():
     user_avatar = profile["pictureUrl"]
 
 # 统一显示名字为 Saygo + 语言代码
-@app.route("/callback", methods=['POST'])
+langs = user_language_settings.get(key, ["en"])
+
 def line_callback():
     # 这里是处理数据的逻辑
     messages = [
