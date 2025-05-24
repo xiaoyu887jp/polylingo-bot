@@ -118,9 +118,9 @@ def callback():
     user_avatar = profile["pictureUrl"]
 
 # 统一显示名字为 Saygo + 语言代码
-langs = user_language_settings.get(key, ["en"])
-
 def line_callback():
+    user_avatar = profile["pictureUrl"]
+    langs = user_language_settings.get(key, ["en"]) 
     # 这里是处理数据的逻辑
     messages = [
         {
