@@ -130,7 +130,7 @@ messages = [
     } for lang in langs
 ]
 
-reply_to_line(reply_token, messages)
+    reply_to_line(reply_token, messages)
 
     return 'OK', 200
 
