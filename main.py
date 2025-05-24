@@ -120,14 +120,14 @@ def callback():
 
     # 统一显示名字为 Saygo + 语言代码
     messages = [
-        {
-            "type": "text",
-            "text": translate(user_text, lang),
-            "sender": {"name": f"Saygo {lang.upper()}", "iconUrl": user_avatar}
-        } for lang in langs
-    ]
+    {
+        "type": "text",
+        "text": html.unescape(translate(user_text, lang)),
+        "sender": {"name": f"Saygo {lang.upper()}", "iconUrl": user_avatar}
+    } for lang in langs
+]
 
-    reply_to_line(reply_token, messages)
+reply_to_line(reply_token, messages)
 
 
 if __name__ == "__main__":
