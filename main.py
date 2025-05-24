@@ -118,8 +118,8 @@ def callback():
 
     user_avatar = profile["pictureUrl"]
 
-    # 统一显示名字为 Saygo + 语言代码
-  messages = [
+# 统一显示名字为 Saygo + 语言代码
+messages = [
     {
         "type": "text",
         "text": html.unescape(translate(user_text, lang)),
@@ -137,3 +137,4 @@ return 'OK', 200
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
