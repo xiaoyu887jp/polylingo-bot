@@ -130,9 +130,9 @@ def line_callback():
                 } for lang in langs
             ]
 
-                reply_to_line(reply_token, messages)
+               reply_to_line(reply_token, messages)
 
-    return 'OK', 200  # 必须保留在这里，函数体的结尾必须有返回值
+               return 'OK', 200  # 必须保留在这里，函数体的结尾必须有返回值
 
 
 @app.route('/stripe-webhook', methods=['POST'])
