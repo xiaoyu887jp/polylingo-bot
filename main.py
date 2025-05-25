@@ -148,7 +148,7 @@ def stripe_webhook():
         subscription_id = data['data']['object']['subscription']
         print("付款成功:", customer_email, subscription_id)
         # 在这里加入更新用户订阅方案的额度
-
+    
     elif event_type == 'customer.subscription.updated':
         subscription_id = data['data']['object']['id']
         print("订阅更新:", subscription_id)
