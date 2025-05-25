@@ -130,11 +130,39 @@ def line_callback():
                 } for lang in langs
             ]
 
-            reply_to_line(reply_token, messages)
+                reply_to_line(reply_token, messages)
 
-    return 'OK', 200
+    return 'OK', 200  # 必须保留在这里，函数体的结尾必须有返回值
+
+
+@app.route('/stripe-webhook', methods=['POST'])
+def stripe_webhook():
+    data = request.json
+
+    event_type = data['type']
+    print("Received event:", event_type)
+
+    if event_type == 'checkout.session.completed':
+        customer_email = data['data']['object']['customer_details']['email']
+        subscription_id = data['data']['object']['subscription']
+        print("付款成功:", customer_email, subscription_id)
+        # 在这里加入更新用户订阅方案的额度
+
+    elif event_type == 'customer.subscription.updated':
+        subscription_id = data['data']['object']['id']
+        print("订阅更新:", subscription_id)
+        # 在这里加入套餐升级或降级的逻辑
+
+    elif event_type == 'customer.subscription.deleted':
+        subscription_id = data['data']['object']['id']
+        print("订阅取消:", subscription_id)
+        # 在这里加入取消订阅的逻辑
+
+    return jsonify(success=True), 200
 
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
+
