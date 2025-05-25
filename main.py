@@ -54,7 +54,11 @@ flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical",
 
 def reply_to_line(reply_token, messages):
     headers = {"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
-    requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json={"replyToken": reply_token, "messages": messages})
+    requests.post(
+        "https://api.line.me/v2/bot/message/reply",
+        headers=headers,
+        json={"replyToken": reply_token, "messages": messages}
+    )
 
 def translate(text, target_language):
     url = f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}"
@@ -62,8 +66,10 @@ def translate(text, target_language):
     response = requests.post(url, json=data)
     return response.json()["data"]["translations"][0]["translatedText"]
 
-def callback():
+@app.route("/callback", methods=["POST"])
+def line_callback():
     events = request.get_json().get("events", [])
+
     for event in events:
         reply_token = event.get("replyToken")
         if not reply_token:
@@ -73,6 +79,13 @@ def callback():
         group_id = source.get("groupId", "private")
         user_id = source.get("userId", "unknown")
         key = f"{group_id}_{user_id}"
+
+        profile = requests.get(
+            f"https://api.line.me/v2/bot/profile/{user_id}",
+            headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
+        ).json()
+
+        user_avatar = profile.get("pictureUrl", "https://example.com/default_avatar.png")
 
         if event["type"] == "join":
             user_language_settings[key] = []
@@ -93,6 +106,7 @@ def callback():
                 continue
 
             langs = user_language_settings.get(key, [])
+
             if not langs:
                 reply_to_line(reply_token, [{"type": "text", "text": "⚠️ Please set your language first using /resetlang."}])
                 continue
@@ -105,40 +119,22 @@ def callback():
 
             user_usage[key] += len(user_text)
 
-    source = event["source"]
-    group_id = source.get("groupId", "private")
-    user_id = source.get("userId", "unknown")
-    key = f"{group_id}_{user_id}"
+            messages = [
+                {
+                    "type": "text",
+                    "text": html.unescape(translate(user_text, lang)),
+                    "sender": {
+                        "name": f"Saygo {lang.upper()}",
+                        "iconUrl": user_avatar
+                    }
+                } for lang in langs
+            ]
 
-    profile = requests.get(
-        f"https://api.line.me/v2/bot/profile/{user_id}",
-        headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
-    ).json()
+            reply_to_line(reply_token, messages)
 
-    user_avatar = profile["pictureUrl"]
-
-# 统一显示名字为 Saygo + 语言代码
-def line_callback():
-    user_avatar = profile["pictureUrl"]
-    langs = user_language_settings.get(key, ["en"]) 
-    # 这里是处理数据的逻辑
-    messages = [
-        {
-            "type": "text",
-            "text": html.unescape(translate(user_text, lang)),
-            "sender": {
-                "name": f"Saygo {lang.upper()}",
-                "iconUrl": user_avatar
-            }
-        } for lang in langs
-    ]
-
-    reply_to_line(reply_token, messages)
-
-    return 'OK', 200  # 这个return必须在函数体内
+    return 'OK', 200
 
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
