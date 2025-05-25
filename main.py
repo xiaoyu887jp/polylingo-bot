@@ -132,7 +132,8 @@ def line_callback():
 
             reply_to_line(reply_token, messages)
 
-            return 'OK', 200  # 必须保留在这里，函数体的结尾必须有返回值
+    # ⚠️ 必须在for循环结束之后有return，通知LINE已经处理完成
+    return 'OK', 200
 
 
 @app.route('/stripe-webhook', methods=['POST'])
@@ -164,5 +165,3 @@ def stripe_webhook():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
-
