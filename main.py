@@ -85,6 +85,15 @@ def line_callback():
             headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
         ).json()
 
+   if event["type"] == "message" and event["message"]["type"] == "text":
+    message_text = event["message"]["text"].strip()
+
+    if message_text == "/re":  # 用户输入 "/re" 时触发
+        send_language_selection_card(reply_token)
+        continue
+
+ 
+
         user_avatar = profile.get("pictureUrl", "https://example.com/default_avatar.png")
 
         if event["type"] == "join":
