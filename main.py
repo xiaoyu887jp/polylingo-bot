@@ -85,10 +85,10 @@ def line_callback():
             headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
         ).json()
 
-              if event["type"] == "message" and event["message"]["type"] == "text":
+         if event["type"] == "message" and event["message"]["type"] == "text":
             message_text = event["message"]["text"].strip()
 
-            if message_text == "/re":
+           if message_text == "/re":
                 send_language_selection_card(reply_token)
                 continue
 
