@@ -85,64 +85,54 @@ def line_callback():
             headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
         ).json()
 
-         if event["type"] == "message" and event["message"]["type"] == "text":
+        if event["type"] == "message" and event["message"]["type"] == "text":
             message_text = event["message"]["text"].strip()
 
             if message_text == "/re":
                 send_language_selection_card(reply_token)
                 continue
 
- 
-
         user_avatar = profile.get("pictureUrl", "https://example.com/default_avatar.png")
 
         if event["type"] == "join":
             user_language_settings[key] = []
-            reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
-            continue
+            welcome_message = FlexSendMessage(
+                alt_text="歡迎使用翻譯機器人，請選擇語言",
+                contents=flex_message_json
+            )
+            line_bot_api.reply_message(reply_token, welcome_message)
 
-        if event["type"] == "message" and event["message"]["type"] == "text":
-            user_text = event["message"]["text"]
-
-            if user_text == "/resetlang":
-                user_language_settings[key] = []
-                reply_to_line(reply_token, [{"type": "flex", "altText": "Select language", "contents": flex_message_json}])
+        elif event["type"] == "message":
+            user_languages = user_language_settings.get(key, [])
+            if not user_languages:
+                welcome_message = FlexSendMessage(
+                    alt_text="請選擇語言",
+                    contents=flex_message_json
+                )
+                line_bot_api.reply_message(reply_token, welcome_message)
                 continue
 
-            if user_text in LANGUAGES:
-                user_language_settings.setdefault(key, []).append(user_text)
-                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(user_language_settings[key])}"}])
+            current_month = datetime.now().strftime("%Y-%m")
+            usage_key = f"{group_id}_{current_month}"
+            usage = user_usage.get(usage_key, 0)
+
+            if usage >= MONTHLY_FREE_QUOTA:
+                quota_message = quota_messages.get(user_languages[0], quota_messages["en"])
+                line_bot_api.reply_message(reply_token, TextSendMessage(text=quota_message))
                 continue
 
-            langs = user_language_settings.get(key, [])
+            translation_results = []
+            original_text = event["message"]["text"]
 
-            if not langs:
-                reply_to_line(reply_token, [{"type": "text", "text": "⚠️ Please set your language first using /resetlang."}])
-                continue
+            for language in user_languages:
+                translated_text = translate(original_text, language)
+                translation_results.append(TextSendMessage(text=f"[{language}] {translated_text}"))
 
-            user_usage.setdefault(key, 0)
-            if user_usage[key] + len(user_text) > MONTHLY_FREE_QUOTA:
-                lang = langs[0] if langs else "en"
-                reply_to_line(reply_token, [{"type": "text", "text": quota_messages.get(lang, quota_messages["en"])}])
-                continue
+            line_bot_api.reply_message(reply_token, translation_results)
 
-            user_usage[key] += len(user_text)
+            user_usage[usage_key] = usage + len(original_text)
 
-            messages = [
-                {
-                    "type": "text",
-                    "text": html.unescape(translate(user_text, lang)),
-                    "sender": {
-                        "name": f"Saygo {lang.upper()}",
-                        "iconUrl": user_avatar
-                    }
-                } for lang in langs
-            ]
-
-            reply_to_line(reply_token, messages)
-
-    # ⚠️ 必须在for循环结束之后有return，通知LINE已经处理完成
-    return 'OK', 200
+    return jsonify(success=True), 200
 
 
 @app.route('/stripe-webhook', methods=['POST'])
