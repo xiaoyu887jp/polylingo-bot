@@ -9,6 +9,7 @@ app = Flask(__name__)
 
 LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
 GOOGLE_API_KEY = "AIzaSyBOMVXr3XCeqrD6WZLRLL-51chqDA9I80o"
+line_bot_api = LineBotApi(LINE_ACCESS_TOKEN)
 
 user_language_settings = {}
 user_usage = {}
@@ -70,6 +71,13 @@ def translate(text, target_language):
     response = requests.post(url, json=data)
     return response.json()["data"]["translations"][0]["translatedText"]
 
+def send_language_selection_card(reply_token):
+    flex_message = FlexSendMessage(
+        alt_text="Select Language",
+        contents=flex_message_json
+    )
+    line_bot_api.reply_message(reply_token, flex_message)
+
 @app.route("/callback", methods=["POST"])
 def line_callback():
     events = request.get_json().get("events", [])
@@ -89,6 +97,8 @@ def line_callback():
             headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
         ).json()
 
+        user_avatar = profile.get("pictureUrl", "https://example.com/default_avatar.png")
+
         if event["type"] == "message" and event["message"]["type"] == "text":
             message_text = event["message"]["text"].strip()
 
@@ -96,17 +106,6 @@ def line_callback():
                 send_language_selection_card(reply_token)
                 continue
 
-        user_avatar = profile.get("pictureUrl", "https://example.com/default_avatar.png")
-
-        if event["type"] == "join":
-            user_language_settings[key] = []
-            welcome_message = FlexSendMessage(
-                alt_text="歡迎使用翻譯機器人，請選擇語言",
-                contents=flex_message_json
-            )
-            line_bot_api.reply_message(reply_token, welcome_message)
-
-        elif event["type"] == "message":
             user_languages = user_language_settings.get(key, [])
             if not user_languages:
                 welcome_message = FlexSendMessage(
@@ -133,8 +132,15 @@ def line_callback():
                 translation_results.append(TextSendMessage(text=f"[{language}] {translated_text}"))
 
             line_bot_api.reply_message(reply_token, translation_results)
-
             user_usage[usage_key] = usage + len(original_text)
+
+        elif event["type"] == "join":
+            user_language_settings[key] = []
+            welcome_message = FlexSendMessage(
+                alt_text="歡迎使用翻譯機器人，請選擇語言",
+                contents=flex_message_json
+            )
+            line_bot_api.reply_message(reply_token, welcome_message)
 
     return jsonify(success=True), 200
 
@@ -151,7 +157,7 @@ def stripe_webhook():
         subscription_id = data['data']['object']['subscription']
         print("付款成功:", customer_email, subscription_id)
         # 在这里加入更新用户订阅方案的额度
-    
+
     elif event_type == 'customer.subscription.updated':
         subscription_id = data['data']['object']['id']
         print("订阅更新:", subscription_id)
