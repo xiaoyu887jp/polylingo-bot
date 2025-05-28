@@ -3,6 +3,7 @@ import html
 from flask import Flask, request, jsonify
 from linebot import LineBotApi
 from linebot.models import FlexSendMessage
+from datetime import datetime  # 新增这一行
 
 app = Flask(__name__)
 
