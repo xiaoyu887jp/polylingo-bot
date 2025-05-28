@@ -57,7 +57,19 @@ flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical",
     {"type":"button","style":"secondary","action":{"type":"message","label":"🔄 Reset","text":"/resetlang"}}
   ]}
 }
-
+def reply_to_line(reply_token, messages):
+    headers = {"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
+    requests.post(
+        "https://api.line.me/v2/bot/message/reply",
+        headers=headers,
+        json={"replyToken": reply_token, "messages": messages}
+    )
+def send_language_selection_card(reply_token):
+    flex_message = FlexSendMessage(
+        alt_text="Please select translation language",
+        contents=flex_message_json
+    )
+   
 @app.route("/callback", methods=["POST"])
 def callback():
     events = request.get_json().get("events", [])
