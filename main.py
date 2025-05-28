@@ -32,7 +32,7 @@ quota_messages = {
     "hi": "⚠️ आपका मुफ्त अनुवाद कोटा (5000 अक्षर) खत्म। यहां सदस्यता लें: https://polylingo-bot.onrender.com",
     "it": "⚠️ Hai esaurito la quota gratuita (5000 caratteri). Abbonati qui: https://polylingo-bot.onrender.com",
     "pt": "⚠️ Sua cota grátis (5000 caracteres) acabou. Assine aqui: https://polylingo-bot.onrender.com",
-    "ru": "⚠️ Ваш бесплатный лимит (5000 символов) исчерпан. Подписаться: https://polylingo-bot.onrender.com",
+    "ru": "⚠️ Ваш бесплатный лимит (5000 символов) исчерпан. Подписаться: https://polylingo-bot.onrender.com",但是
     "ar": "⚠️ لقد استنفدت حصة الترجمة المجانية (5000 حرف). اشترك هنا: https://polylingo-bot.onrender.com"
 }
 
@@ -73,7 +73,7 @@ def translate(text, target_language):
 
 def send_language_selection_card(reply_token):
     flex_message = FlexSendMessage(
-        alt_text="Select Language",
+        alt_text="Please select translation language",
         contents=flex_message_json
     )
     line_bot_api.reply_message(reply_token, flex_message)
@@ -99,6 +99,11 @@ def line_callback():
 
         user_avatar = profile.get("pictureUrl", "https://example.com/default_avatar.png")
 
+        if event["type"] == "join":
+            user_language_settings[key] = []
+            send_language_selection_card(reply_token)
+            continue
+
         if event["type"] == "message" and event["message"]["type"] == "text":
             message_text = event["message"]["text"].strip()
 
@@ -106,13 +111,32 @@ def line_callback():
                 send_language_selection_card(reply_token)
                 continue
 
+            if message_text == "/resetlang":
+                user_language_settings[key] = []
+                send_language_selection_card(reply_token)
+                continue
+
+            # 用户选择语言后的处理逻辑（替换后的完整逻辑）
+            if message_text in LANGUAGES:
+                if not user_language_settings.get(key):
+                    user_language_settings[key] = [message_text]
+                    reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {message_text}"}])
+                else:
+                    original_text = message_text
+                    translation_results = []
+                    for language in user_language_settings[key]:
+                        translated_text = translate(original_text, language)
+                        translation_results.append({
+                            "type": "text",
+                            "text": f"[{language}] {translated_text}"
+                        })
+                    reply_to_line(reply_token, translation_results)
+                continue
+
             user_languages = user_language_settings.get(key, [])
+            
             if not user_languages:
-                welcome_message = FlexSendMessage(
-                    alt_text="請選擇語言",
-                    contents=flex_message_json
-                )
-                line_bot_api.reply_message(reply_token, welcome_message)
+                send_language_selection_card(reply_token)
                 continue
 
             current_month = datetime.now().strftime("%Y-%m")
@@ -121,7 +145,7 @@ def line_callback():
 
             if usage >= MONTHLY_FREE_QUOTA:
                 quota_message = quota_messages.get(user_languages[0], quota_messages["en"])
-                line_bot_api.reply_message(reply_token, TextSendMessage(text=quota_message))
+                reply_to_line(reply_token, [{"type": "text", "text": quota_message}])
                 continue
 
             translation_results = []
@@ -129,26 +153,17 @@ def line_callback():
 
             for language in user_languages:
                 translated_text = translate(original_text, language)
-                translation_results.append(TextSendMessage(text=f"[{language}] {translated_text}"))
+                translation_results.append({"type": "text", "text": f"[{language}] {translated_text}"})
 
-            line_bot_api.reply_message(reply_token, translation_results)
+            reply_to_line(reply_token, translation_results)
+
             user_usage[usage_key] = usage + len(original_text)
 
-        elif event["type"] == "join":
-            user_language_settings[key] = []
-            welcome_message = FlexSendMessage(
-                alt_text="歡迎使用翻譯機器人，請選擇語言",
-                contents=flex_message_json
-            )
-            line_bot_api.reply_message(reply_token, welcome_message)
-
     return jsonify(success=True), 200
-
 
 @app.route('/stripe-webhook', methods=['POST'])
 def stripe_webhook():
     data = request.json
-
     event_type = data['type']
     print("Received event:", event_type)
 
@@ -156,20 +171,16 @@ def stripe_webhook():
         customer_email = data['data']['object']['customer_details']['email']
         subscription_id = data['data']['object']['subscription']
         print("付款成功:", customer_email, subscription_id)
-        # 在这里加入更新用户订阅方案的额度
-
+    
     elif event_type == 'customer.subscription.updated':
         subscription_id = data['data']['object']['id']
         print("订阅更新:", subscription_id)
-        # 在这里加入套餐升级或降级的逻辑
 
     elif event_type == 'customer.subscription.deleted':
         subscription_id = data['data']['object']['id']
         print("订阅取消:", subscription_id)
-        # 在这里加入取消订阅的逻辑
 
     return jsonify(success=True), 200
-
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
