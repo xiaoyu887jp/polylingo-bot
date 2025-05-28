@@ -58,31 +58,9 @@ flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical",
   ]}
 }
 
-def reply_to_line(reply_token, messages):
-    headers = {"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
-    requests.post(
-        "https://api.line.me/v2/bot/message/reply",
-        headers=headers,
-        json={"replyToken": reply_token, "messages": messages}
-    )
-
-def translate(text, target_language):
-    url = f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}"
-    data = {"q": text, "target": target_language}
-    response = requests.post(url, json=data)
-    return response.json()["data"]["translations"][0]["translatedText"]
-
-def send_language_selection_card(reply_token):
-    flex_message = FlexSendMessage(
-        alt_text="Please select translation language",
-        contents=flex_message_json
-    )
-    line_bot_api.reply_message(reply_token, flex_message)
-
 @app.route("/callback", methods=["POST"])
-def line_callback():
+def callback():
     events = request.get_json().get("events", [])
-
     for event in events:
         reply_token = event.get("replyToken")
         if not reply_token:
@@ -93,12 +71,11 @@ def line_callback():
         user_id = source.get("userId", "unknown")
         key = f"{group_id}_{user_id}"
 
-        profile = requests.get(
-            f"https://api.line.me/v2/bot/profile/{user_id}",
-            headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
-        ).json()
-
-        user_avatar = profile.get("pictureUrl", "https://example.com/default_avatar.png")
+        profile_res = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}",
+                                   headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"})
+        profile_data = profile_res.json()
+        user_name = profile_data.get("displayName", "User")
+        user_avatar = profile_data.get("pictureUrl", "https://example.com/default_avatar.png")
 
         if event["type"] == "join":
             user_language_settings[key] = []
@@ -106,61 +83,66 @@ def line_callback():
             continue
 
         if event["type"] == "message" and event["message"]["type"] == "text":
-            message_text = event["message"]["text"].strip()
+            user_text = event["message"]["text"].strip()
 
-            if message_text == "/re":
-                send_language_selection_card(reply_token)
-                continue
-
-            if message_text == "/resetlang":
+            if user_text in ["/reset", "/re"]:
                 user_language_settings[key] = []
                 send_language_selection_card(reply_token)
                 continue
 
-            # 用户选择语言后的处理逻辑（替换后的完整逻辑）
-            if message_text in LANGUAGES:
-                if not user_language_settings.get(key):
-                    user_language_settings[key] = [message_text]
-                    reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {message_text}"}])
-                else:
-                    original_text = message_text
-                    translation_results = []
-                    for language in user_language_settings[key]:
-                        translated_text = translate(original_text, language)
-                        translation_results.append({
-                            "type": "text",
-                            "text": f"[{language}] {translated_text}"
-                        })
-                    reply_to_line(reply_token, translation_results)
+            if user_text in LANGUAGES:
+                if key not in user_language_settings:
+                    user_language_settings[key] = []
+                if user_text not in user_language_settings[key]:
+                    user_language_settings[key].append(user_text)
+                langs = ', '.join(user_language_settings[key])
+                reply_to_line(reply_token, [{
+                    "type": "text",
+                    "text": f"✅ Your languages: {langs}"
+                }])
                 continue
 
-            user_languages = user_language_settings.get(key, [])
-            
-            if not user_languages:
+            langs = user_language_settings.get(key, [])
+            if not langs:
                 send_language_selection_card(reply_token)
                 continue
 
             current_month = datetime.now().strftime("%Y-%m")
-            usage_key = f"{group_id}_{current_month}"
+            usage_key = f"{key}_{current_month}"
             usage = user_usage.get(usage_key, 0)
 
+            messages = []
             if usage >= MONTHLY_FREE_QUOTA:
-                quota_message = quota_messages.get(user_languages[0], quota_messages["en"])
-                reply_to_line(reply_token, [{"type": "text", "text": quota_message}])
-                continue
+                quota_message = quota_messages.get(langs[0], quota_messages["en"])
+                messages.append({
+                    "type": "text",
+                    "text": quota_message
+                })
+            else:
+                for lang in langs:
+                    translated_text = translate(user_text, lang)
+                    messages.append({
+                        "type": "text",
+                        "text": translated_text,
+                        "sender": {
+                            "name": f"Saygo ({lang})",
+                            "iconUrl": user_avatar
+                        }
+                    })
+                    usage += len(user_text)
+                    if usage >= MONTHLY_FREE_QUOTA:
+                        quota_message = quota_messages.get(lang, quota_messages["en"])
+                        messages.append({
+                            "type": "text",
+                            "text": quota_message
+                        })
+                        break
+                user_usage[usage_key] = usage
 
-            translation_results = []
-            original_text = event["message"]["text"]
-
-            for language in user_languages:
-                translated_text = translate(original_text, language)
-                translation_results.append({"type": "text", "text": f"[{language}] {translated_text}"})
-
-            reply_to_line(reply_token, translation_results)
-
-            user_usage[usage_key] = usage + len(original_text)
+            reply_to_line(reply_token, messages)
 
     return jsonify(success=True), 200
+
 
 @app.route('/stripe-webhook', methods=['POST'])
 def stripe_webhook():
