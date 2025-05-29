@@ -128,8 +128,9 @@ def callback():
                 send_language_selection_card(reply_token)
                 continue
 
-            current_month = datetime.now().strftime("%Y-%m")
-            usage_key = f"{user_id}_{current_month}"
+            usage_key = f"{user_id}_lifetime"
+
+            
             usage = user_usage.get(usage_key, 0)
 
             messages = []
