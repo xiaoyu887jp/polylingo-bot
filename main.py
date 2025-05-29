@@ -97,10 +97,8 @@ def callback():
         )
         if profile_res.status_code == 200:
             profile_data = profile_res.json()
-            user_name = profile_data.get("displayName", "User")
             user_avatar = profile_data.get("pictureUrl", "https://example.com/default_avatar.png")
         else:
-            user_name = "Saygo"
             user_avatar = "https://example.com/default_avatar.png"
 
         if event["type"] == "join":
@@ -141,20 +139,19 @@ def callback():
             else:
                 for lang in langs:
                     translated_text = translate(user_text, lang)
-                   # 已加好友的用户使用自己的头像，未加好友用户使用默认头像
-                   if user_avatar != "https://example.com/default_avatar.png":
-                      sender_icon = user_avatar
-                   else:
-                      sender_icon = "https://example.com/default_avatar.png"
+                    if user_avatar != "https://example.com/default_avatar.png":
+                        sender_icon = user_avatar
+                    else:
+                        sender_icon = "https://example.com/default_avatar.png"
 
                     messages.append({
                         "type": "text",
                         "text": translated_text,
                         "sender": {
-                        "name": f"Saygo ({lang})",
-                        "iconUrl": sender_icon
+                            "name": f"Saygo ({lang})",
+                            "iconUrl": sender_icon
                         }
-                })
+                    })
 
                     usage += len(user_text)
                     if usage >= MONTHLY_FREE_QUOTA:
