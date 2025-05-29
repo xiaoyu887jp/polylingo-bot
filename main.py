@@ -58,7 +58,7 @@ flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical",
   ]}
 }
 
-flex_message_json = {}  # 请自行填入Flex消息内容
+
 
 def reply_to_line(reply_token, messages):
     headers = {"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
