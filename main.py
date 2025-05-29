@@ -97,7 +97,10 @@ def callback():
         )
         if profile_res.status_code == 200:
             profile_data = profile_res.json()
-            user_avatar = profile_data.get("pictureUrl", "https://example.com/default_avatar.png")
+            user_avatar = profile_data.get("pictureUrl")
+            # 若未加好友或无头像，强制使用机器人默认头像
+            if not user_avatar:
+                user_avatar = "https://example.com/default_avatar.png"
         else:
             user_avatar = "https://example.com/default_avatar.png"
 
@@ -148,10 +151,7 @@ def callback():
                     messages.append({
                         "type": "text",
                         "text": translated_text,
-                        "sender": {
-                            "name": f"Saygo ({lang})",
-                            "iconUrl": sender_icon
-                        }
+                       
                     })
 
                     usage += len(user_text)
