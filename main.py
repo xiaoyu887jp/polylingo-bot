@@ -141,14 +141,21 @@ def callback():
             else:
                 for lang in langs:
                     translated_text = translate(user_text, lang)
-                    messages.append({
-                        "type": "text",
-                        "text": translated_text,
-                        "sender": {
-                            "name": f"{user_name} ({lang})",
-                            "iconUrl": user_avatar
-                        }
-                    })
+                   # 已加好友的用户使用自己的头像，未加好友用户使用默认头像
+                   if user_avatar != "https://example.com/default_avatar.png":
+                      sender_icon = user_avatar
+                else:
+                      sender_icon = "https://example.com/default_avatar.png"
+
+                      messages.append({
+                          "type": "text",
+                          "text": translated_text,
+                          "sender": {
+                          "name": f"Saygo ({lang})",
+                          "iconUrl": sender_icon
+                          }
+                  })
+
                     usage += len(user_text)
                     if usage >= MONTHLY_FREE_QUOTA:
                         quota_message = quota_messages.get(lang, quota_messages["en"])
