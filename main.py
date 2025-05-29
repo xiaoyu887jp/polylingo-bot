@@ -144,7 +144,7 @@ def callback():
                    # 已加好友的用户使用自己的头像，未加好友用户使用默认头像
                    if user_avatar != "https://example.com/default_avatar.png":
                       sender_icon = user_avatar
-                else:
+                   else:
                       sender_icon = "https://example.com/default_avatar.png"
 
                       messages.append({
