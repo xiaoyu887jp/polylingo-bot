@@ -71,6 +71,12 @@ def send_language_selection_card(reply_token):
     )
     line_bot_api.reply_message(reply_token, flex_message)
 
+def translate(text, target_language):
+    url = f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}"
+    data = {"q": text, "target": target_language}
+    response = requests.post(url, json=data)
+    return response.json()["data"]["translations"][0]["translatedText"]
+
 @app.route("/callback", methods=["POST"])
 def callback():
     events = request.get_json().get("events", [])
