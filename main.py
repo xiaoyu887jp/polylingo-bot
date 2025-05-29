@@ -147,7 +147,7 @@ def callback():
                         "type": "text",
                         "text": translated_text,
                         "sender": {
-                            "name": f"{user_name} ({lang})",
+                            "name": f"Saygo AI Translator ({lang})",
                             "iconUrl": user_avatar
                         }
                     })
