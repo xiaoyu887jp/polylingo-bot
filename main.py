@@ -89,7 +89,17 @@ def callback():
         group_id = source.get("groupId", "private")
         user_id = source.get("userId", "unknown")
         key = f"{group_id}_{user_id}"
+        profile_res = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}",
+                           headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"})
+if profile_res.status_code == 200:
+    profile_data = profile_res.json()
+    user_name = profile_data.get("displayName", "User")
+    user_avatar = profile_data.get("pictureUrl", "https://example.com/default_avatar.png")
+else:
+    user_name = "Saygo"
+    user_avatar = "https://example.com/default_avatar.png"
 
+        
         profile_res = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}",
                                    headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"})
         profile_data = profile_res.json()
