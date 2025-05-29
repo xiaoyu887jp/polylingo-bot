@@ -58,6 +58,8 @@ flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical",
   ]}
 }
 
+flex_message_json = {}  # 请自行填入Flex消息内容
+
 def reply_to_line(reply_token, messages):
     headers = {"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
     requests.post(
@@ -95,14 +97,14 @@ def callback():
             f"https://api.line.me/v2/bot/profile/{user_id}",
             headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
         )
+
         if profile_res.status_code == 200:
             profile_data = profile_res.json()
-            user_avatar = profile_data.get("pictureUrl")
-            # 若未加好友或无头像，强制使用机器人默认头像
-            if not user_avatar:
-                user_avatar = "https://example.com/default_avatar.png"
+            user_name = profile_data.get("displayName", "User")
+            user_avatar = profile_data.get("pictureUrl", "")
         else:
-            user_avatar = "https://example.com/default_avatar.png"
+            user_name = "User"
+            user_avatar = ""
 
         if event["type"] == "join":
             user_language_settings[key] = []
@@ -132,8 +134,6 @@ def callback():
                 continue
 
             usage_key = f"{user_id}_lifetime"
-
-            
             usage = user_usage.get(usage_key, 0)
 
             messages = []
@@ -143,15 +143,13 @@ def callback():
             else:
                 for lang in langs:
                     translated_text = translate(user_text, lang)
-                    if user_avatar != "https://example.com/default_avatar.png":
-                        sender_icon = user_avatar
-                    else:
-                        sender_icon = "https://example.com/default_avatar.png"
-
                     messages.append({
                         "type": "text",
                         "text": translated_text,
-                       
+                        "sender": {
+                            "name": f"{user_name} ({lang})",
+                            "iconUrl": user_avatar
+                        }
                     })
 
                     usage += len(user_text)
