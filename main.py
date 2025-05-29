@@ -57,6 +57,7 @@ flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical",
     {"type":"button","style":"secondary","action":{"type":"message","label":"🔄 Reset","text":"/resetlang"}}
   ]}
 }
+
 def reply_to_line(reply_token, messages):
     headers = {"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
     requests.post(
@@ -64,6 +65,7 @@ def reply_to_line(reply_token, messages):
         headers=headers,
         json={"replyToken": reply_token, "messages": messages}
     )
+
 def send_language_selection_card(reply_token):
     flex_message = FlexSendMessage(
         alt_text="Please select translation language",
@@ -73,8 +75,7 @@ def send_language_selection_card(reply_token):
 
 def translate(text, target_language):
     url = f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}"
-    data = {"q": text, "target": target_language}
-    response = requests.post(url, json=data)
+    response = requests.post(url, json={"q": text, "target": target_language})
     return response.json()["data"]["translations"][0]["translatedText"]
 
 @app.route("/callback", methods=["POST"])
@@ -89,25 +90,18 @@ def callback():
         group_id = source.get("groupId", "private")
         user_id = source.get("userId", "unknown")
         key = f"{group_id}_{user_id}"
-profile_res = requests.get(
-    f"https://api.line.me/v2/bot/profile/{user_id}",
-    headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
-)
-if profile_res.status_code == 200:
-    profile_data = profile_res.json()
-    user_name = profile_data.get("displayName", "User")
-    user_avatar = profile_data.get("pictureUrl", "https://example.com/default_avatar.png")
-else:
-    user_name = "Saygo"
-    user_avatar = "https://example.com/default_avatar.png"
 
-
-        
-        profile_res = requests.get(f"https://api.line.me/v2/bot/profile/{user_id}",
-                                   headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"})
-        profile_data = profile_res.json()
-        user_name = profile_data.get("displayName", "User")
-        user_avatar = profile_data.get("pictureUrl", "https://example.com/default_avatar.png")
+        profile_res = requests.get(
+            f"https://api.line.me/v2/bot/profile/{user_id}",
+            headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
+        )
+        if profile_res.status_code == 200:
+            profile_data = profile_res.json()
+            user_name = profile_data.get("displayName", "User")
+            user_avatar = profile_data.get("pictureUrl", "https://example.com/default_avatar.png")
+        else:
+            user_name = "Saygo"
+            user_avatar = "https://example.com/default_avatar.png"
 
         if event["type"] == "join":
             user_language_settings[key] = []
@@ -117,7 +111,7 @@ else:
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"].strip()
 
-            if user_text in ["/reset", "/re"]:
+            if user_text in ["/reset", "/re", "/resetlang"]:
                 user_language_settings[key] = []
                 send_language_selection_card(reply_token)
                 continue
@@ -128,10 +122,7 @@ else:
                 if user_text not in user_language_settings[key]:
                     user_language_settings[key].append(user_text)
                 langs = ', '.join(user_language_settings[key])
-                reply_to_line(reply_token, [{
-                    "type": "text",
-                    "text": f"✅ Your languages: {langs}"
-                }])
+                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {langs}"}])
                 continue
 
             langs = user_language_settings.get(key, [])
@@ -140,16 +131,13 @@ else:
                 continue
 
             current_month = datetime.now().strftime("%Y-%m")
-            usage_key = f"{key}_{current_month}"
+            usage_key = f"{user_id}_{current_month}"
             usage = user_usage.get(usage_key, 0)
 
             messages = []
             if usage >= MONTHLY_FREE_QUOTA:
                 quota_message = quota_messages.get(langs[0], quota_messages["en"])
-                messages.append({
-                    "type": "text",
-                    "text": quota_message
-                })
+                messages.append({"type": "text", "text": quota_message})
             else:
                 for lang in langs:
                     translated_text = translate(user_text, lang)
@@ -157,17 +145,14 @@ else:
                         "type": "text",
                         "text": translated_text,
                         "sender": {
-                            "name": f"Saygo ({lang})",
+                            "name": f"{user_name} ({lang})",
                             "iconUrl": user_avatar
                         }
                     })
                     usage += len(user_text)
                     if usage >= MONTHLY_FREE_QUOTA:
                         quota_message = quota_messages.get(lang, quota_messages["en"])
-                        messages.append({
-                            "type": "text",
-                            "text": quota_message
-                        })
+                        messages.append({"type": "text", "text": quota_message})
                         break
                 user_usage[usage_key] = usage
 
@@ -175,25 +160,15 @@ else:
 
     return jsonify(success=True), 200
 
-
 @app.route('/stripe-webhook', methods=['POST'])
 def stripe_webhook():
     data = request.json
     event_type = data['type']
-    print("Received event:", event_type)
 
     if event_type == 'checkout.session.completed':
         customer_email = data['data']['object']['customer_details']['email']
         subscription_id = data['data']['object']['subscription']
         print("付款成功:", customer_email, subscription_id)
-    
-    elif event_type == 'customer.subscription.updated':
-        subscription_id = data['data']['object']['id']
-        print("订阅更新:", subscription_id)
-
-    elif event_type == 'customer.subscription.deleted':
-        subscription_id = data['data']['object']['id']
-        print("订阅取消:", subscription_id)
 
     return jsonify(success=True), 200
 
