@@ -147,14 +147,14 @@ def callback():
                    else:
                       sender_icon = "https://example.com/default_avatar.png"
 
-                      messages.append({
-                          "type": "text",
-                          "text": translated_text,
-                          "sender": {
-                          "name": f"Saygo ({lang})",
-                          "iconUrl": sender_icon
-                          }
-                  })
+                    messages.append({
+                        "type": "text",
+                        "text": translated_text,
+                        "sender": {
+                        "name": f"Saygo ({lang})",
+                        "iconUrl": sender_icon
+                        }
+                })
 
                     usage += len(user_text)
                     if usage >= MONTHLY_FREE_QUOTA:
