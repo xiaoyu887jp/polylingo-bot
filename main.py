@@ -69,7 +69,8 @@ def send_language_selection_card(reply_token):
         alt_text="Please select translation language",
         contents=flex_message_json
     )
-   
+    line_bot_api.reply_message(reply_token, flex_message)
+
 @app.route("/callback", methods=["POST"])
 def callback():
     events = request.get_json().get("events", [])
