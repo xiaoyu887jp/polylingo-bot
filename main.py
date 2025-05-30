@@ -80,8 +80,14 @@ def send_language_selection_card(reply_token):
 def translate(text, target_language):
     url = f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}"
     response = requests.post(url, json={"q": text, "target": target_language})
-    return response.json()["data"]["translations"][0]["translatedText"]
-
+    if response.status_code == 200:
+        response.encoding = 'utf-8'
+        translation_data = response.json()
+        translated_text = translation_data["data"]["translations"][0]["translatedText"]
+        translated_text = html.unescape(translated_text)  # 解决特殊字符乱码
+        return translated_text
+    else:
+        return "Translation error."
 
 @app.route("/callback", methods=["POST"])
 def callback():
