@@ -68,6 +68,7 @@ def reply_to_line(reply_token, messages):
         json={"replyToken": reply_token, "messages": messages}
     )
 
+
 def send_language_selection_card(reply_token):
     flex_message = FlexSendMessage(
         alt_text="Please select translation language",
@@ -75,10 +76,12 @@ def send_language_selection_card(reply_token):
     )
     line_bot_api.reply_message(reply_token, flex_message)
 
+
 def translate(text, target_language):
     url = f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}"
     response = requests.post(url, json={"q": text, "target": target_language})
     return response.json()["data"]["translations"][0]["translatedText"]
+
 
 @app.route("/callback", methods=["POST"])
 def callback():
@@ -104,7 +107,7 @@ def callback():
             user_avatar = profile_data.get("pictureUrl", "")
         else:
             user_name = "User"
-            user_avatar = ""
+            user_avatar = "https://example.com/default_avatar.png"
 
         if event["type"] == "join":
             user_language_settings[key] = []
@@ -133,7 +136,8 @@ def callback():
                 send_language_selection_card(reply_token)
                 continue
 
-            usage_key = f"{user_id}_lifetime"
+            current_month = datetime.now().strftime("%Y-%m")
+            usage_key = f"{key}_{current_month}"
             usage = user_usage.get(usage_key, 0)
 
             messages = []
@@ -143,12 +147,18 @@ def callback():
             else:
                 for lang in langs:
                     translated_text = translate(user_text, lang)
+
+                    if user_avatar != "https://example.com/default_avatar.png":
+                        sender_icon = user_avatar
+                    else:
+                        sender_icon = "https://example.com/default_avatar.png"
+
                     messages.append({
                         "type": "text",
                         "text": translated_text,
                         "sender": {
-                            "name": f"Saygo AI Translator ({lang})",
-                            "iconUrl": user_avatar
+                            "name": f"Saygo ({lang})",
+                            "iconUrl": sender_icon
                         }
                     })
 
@@ -163,6 +173,7 @@ def callback():
 
     return jsonify(success=True), 200
 
+
 @app.route('/stripe-webhook', methods=['POST'])
 def stripe_webhook():
     data = request.json
@@ -175,6 +186,8 @@ def stripe_webhook():
 
     return jsonify(success=True), 200
 
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
