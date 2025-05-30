@@ -151,7 +151,7 @@ def callback():
                     if user_avatar != "https://example.com/default_avatar.png":
                         sender_icon = user_avatar
                     else:
-                        sender_icon = "https://i.imgur.com/Rnbgymh.png"
+                        sender_icon = "https://i.imgur.com/sTqykvy.png"
 
                     messages.append({
                         "type": "text",
