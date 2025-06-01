@@ -1,11 +1,54 @@
 import requests, os
 import html
 from flask import Flask, request, jsonify
+import sqlite3 
 from linebot import LineBotApi
 from linebot.models import FlexSendMessage
 from datetime import datetime  # 新增这一行
 
 app = Flask(__name__)
+DATABASE = 'data.db'
+
+def update_usage(group_id, user_id, text_length):
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    current_month = datetime.now().strftime("%Y-%m")
+
+    cursor.execute('''
+        SELECT usage FROM usage_records
+        WHERE group_id=? AND user_id=? AND month=?
+    ''', (group_id, user_id, current_month))
+    row = cursor.fetchone()
+
+    if row:
+        new_usage = row[0] + text_length
+        cursor.execute('''
+            UPDATE usage_records SET usage=? 
+            WHERE group_id=? AND user_id=? AND month=?
+        ''', (new_usage, group_id, user_id, current_month))
+    else:
+        new_usage = text_length
+        cursor.execute('''
+            INSERT INTO usage_records (group_id, user_id, month, usage) 
+            VALUES (?, ?, ?, ?)
+        ''', (group_id, user_id, current_month, new_usage))
+
+    conn.commit()
+    conn.close()
+
+def get_current_usage(group_id, user_id):
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    current_month = datetime.now().strftime("%Y-%m")
+
+    cursor.execute('''
+        SELECT usage FROM usage_records
+        WHERE group_id=? AND user_id=? AND month=?
+    ''', (group_id, user_id, current_month))
+    row = cursor.fetchone()
+
+    conn.close()
+    return row[0] if row else 0
 
 
 LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
@@ -142,9 +185,9 @@ def callback():
                 send_language_selection_card(reply_token)
                 continue
 
-            current_month = datetime.now().strftime("%Y-%m")
-            usage_key = f"{key}_{current_month}"
-            usage = user_usage.get(usage_key, 0)
+            usage = get_current_usage(group_id, user_id)
+
+           
 
             messages = []
             if usage >= MONTHLY_FREE_QUOTA:
@@ -168,12 +211,13 @@ def callback():
                         }
                     })
 
-                    usage += len(user_text)
+                  
                     if usage >= MONTHLY_FREE_QUOTA:
                         quota_message = quota_messages.get(lang, quota_messages["en"])
                         messages.append({"type": "text", "text": quota_message})
                         break
-                user_usage[usage_key] = usage
+            update_usage(group_id, user_id, len(user_text))
+
 
             reply_to_line(reply_token, messages)
 
