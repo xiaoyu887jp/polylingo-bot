@@ -185,7 +185,9 @@ def callback():
                 send_language_selection_card(reply_token)
                 continue
 
+            update_usage(group_id, user_id, len(user_text))
             usage = get_current_usage(group_id, user_id)
+
 
            
 
