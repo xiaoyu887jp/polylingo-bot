@@ -57,7 +57,7 @@ line_bot_api = LineBotApi(LINE_ACCESS_TOKEN)
 
 user_language_settings = {}
 user_usage = {}
-MONTHLY_FREE_QUOTA = 200
+MONTHLY_FREE_QUOTA = 5000
 
 LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
 
