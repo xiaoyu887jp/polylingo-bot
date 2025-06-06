@@ -9,6 +9,23 @@ from datetime import datetime  # 新增这一行
 app = Flask(__name__)
 DATABASE = 'data.db'
 
+# 检查群组是否已发送过语言卡片
+def has_sent_card(group_id):
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT card_sent FROM group_settings WHERE group_id=?', (group_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row and row[0] == 1
+
+# 标记群组为已发送过语言卡片
+def mark_card_sent(group_id):
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    cursor.execute('INSERT OR REPLACE INTO group_settings (group_id, card_sent) VALUES (?, 1)', (group_id,))
+    conn.commit()
+    conn.close()
+
 def update_usage(group_id, user_id, text_length):
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
@@ -242,4 +259,3 @@ def stripe_webhook():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
