@@ -244,11 +244,11 @@ def callback():
                          sender_icon = "https://i.imgur.com/sTqykvy.png"
 
                      messages.append({
-                        "type": "text",
-                        "text": translated_text,
-                        "sender": {
-                            "name": f"Saygo ({lang})",
-                            "iconUrl": sender_icon
+                         "type": "text",
+                         "text": translated_text,
+                         "sender": {
+                             "name": f"Saygo ({lang})",
+                             "iconUrl": sender_icon
                         }
                     })
 
