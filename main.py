@@ -1,3 +1,22 @@
+def update_user_quota(user_id, text_length):
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT quota FROM user_quota WHERE user_id=?', (user_id,))
+    row = cursor.fetchone()
+
+    if row:
+        new_quota = max(0, row[0] - text_length)
+        cursor.execute('UPDATE user_quota SET quota=? WHERE user_id=?', (new_quota, user_id))
+    else:
+        new_quota = max(0, 2000 - text_length)
+        cursor.execute('INSERT INTO user_quota (user_id, quota) VALUES (?, ?)', (user_id, new_quota))
+
+    conn.commit()
+    conn.close()
+    return new_quota
+
+
 import requests, os
 import html
 from flask import Flask, request, jsonify
@@ -209,7 +228,9 @@ def callback():
            
 
             messages = []
-            if usage >= MONTHLY_FREE_QUOTA:
+            new_quota = update_user_quota(user_id, len(user_text))
+
+            if new_quota <= 0:
                 quota_message = quota_messages.get(langs[0], quota_messages["en"])
                 messages.append({"type": "text", "text": quota_message})
             else:
@@ -218,10 +239,11 @@ def callback():
 
                     if user_avatar != "https://example.com/default_avatar.png":
                         sender_icon = user_avatar
-                    else:
-                        sender_icon = "https://i.imgur.com/sTqykvy.png"
 
-                    messages.append({
+                    else:
+                         sender_icon = "https://i.imgur.com/sTqykvy.png"
+
+                     messages.append({
                         "type": "text",
                         "text": translated_text,
                         "sender": {
