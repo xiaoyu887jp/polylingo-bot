@@ -243,7 +243,7 @@ def callback():
                     else:
                          sender_icon = "https://i.imgur.com/sTqykvy.png"
 
-                     messages.append({
+                    messages.append({
                          "type": "text",
                          "text": translated_text,
                          "sender": {
