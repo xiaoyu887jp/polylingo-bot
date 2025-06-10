@@ -43,8 +43,6 @@ from linebot import LineBotApi
 from linebot.models import FlexSendMessage
 from datetime import datetime  # 新增这一行
 
-app = Flask(__name__)
-DATABASE = 'data.db'
 
 # 检查群组是否已发送过语言卡片
 def has_sent_card(group_id):
@@ -116,22 +114,22 @@ MONTHLY_FREE_QUOTA = 2000
 LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
 
 quota_messages = {
-     "en": "⚠️ Your free translation quota (5000 characters) has been exhausted. Subscribe here: https://saygo-translator.carrd.co",
-    "zh-tw": "⚠️ 您的免費翻譯額度（5000字）已使用完畢。請點擊訂閱：https://saygo-translator.carrd.co",
-    "zh-cn": "⚠️ 您的免费翻译额度（5000字）已用完。请点击订阅：https://saygo-translator.carrd.co",
-    "ja": "⚠️ 無料翻訳枠（5000文字）を使い切りました。登録はこちら：https://saygo-translator.carrd.co",
-    "ko": "⚠️ 무료 번역 한도(5000자)를 초과했습니다. 구독하기: https://saygo-translator.carrd.co",
-    "th": "⚠️ คุณใช้โควต้าการแปลฟรี (5000 ตัวอักษร) หมดแล้ว สมัครที่นี่: https://saygo-translator.carrd.co",
-    "vi": "⚠️ Bạn đã dùng hết hạn ngạch miễn phí (5000 ký tự). Đăng ký tại đây: https://saygo-translator.carrd.co",
-    "fr": "⚠️ Vous avez épuisé votre quota gratuit (5000 caractères). Abonnez-vous ici : https://saygo-translator.carrd.co",
-    "es": "⚠️ Has agotado tu cuota gratuita (5000 caracteres). Suscríbete aquí: https://saygo-translator.carrd.co",
-    "de": "⚠️ Ihr kostenloses Limit (5000 Zeichen) ist erschöpft. Hier abonnieren: https://saygo-translator.carrd.co",
-    "id": "⚠️ Kuota gratis Anda (5000 karakter) telah habis. Berlangganan: https://saygo-translator.carrd.co",
-    "hi": "⚠️ आपका मुफ्त अनुवाद कोटा (5000 अक्षर) खत्म। यहां सदस्यता लें: https://saygo-translator.carrd.co",
-    "it": "⚠️ Hai esaurito la quota gratuita (5000 caratteri). Abbonati qui: https://saygo-translator.carrd.co",
-    "pt": "⚠️ Sua cota grátis (5000 caracteres) acabou. Assine aqui: https://saygo-translator.carrd.co",
-    "ru": "⚠️ Ваш бесплатный лимит (5000 символов) исчерпан. Подписаться: https://saygo-translator.carrd.co",
-    "ar": "⚠️ لقد استنفدت حصة الترجمة المجانية (5000 حرف). اشترك هنا: https://saygo-translator.carrd.co"
+     "en": "⚠️ Your free translation quota (2000 characters) has been exhausted. Subscribe here: https://saygo-translator.carrd.co",
+    "zh-tw": "⚠️ 您的免費翻譯額度（2000字）已使用完畢。請點擊訂閱：https://saygo-translator.carrd.co",
+    "zh-cn": "⚠️ 您的免费翻译额度（2000字）已用完。请点击订阅：https://saygo-translator.carrd.co",
+    "ja": "⚠️ 無料翻訳枠（2000文字）を使い切りました。登録はこちら：https://saygo-translator.carrd.co",
+    "ko": "⚠️ 무료 번역 한도(2000자)를 초과했습니다. 구독하기: https://saygo-translator.carrd.co",
+    "th": "⚠️ คุณใช้โควต้าการแปลฟรี (2000 ตัวอักษร) หมดแล้ว สมัครที่นี่: https://saygo-translator.carrd.co",
+    "vi": "⚠️ Bạn đã dùng hết hạn ngạch miễn phí (2000 ký tự). Đăng ký tại đây: https://saygo-translator.carrd.co",
+    "fr": "⚠️ Vous avez épuisé votre quota gratuit (2000 caractères). Abonnez-vous ici : https://saygo-translator.carrd.co",
+    "es": "⚠️ Has agotado tu cuota gratuita (2000 caracteres). Suscríbete aquí: https://saygo-translator.carrd.co",
+    "de": "⚠️ Ihr kostenloses Limit (2000 Zeichen) ist erschöpft. Hier abonnieren: https://saygo-translator.carrd.co",
+    "id": "⚠️ Kuota gratis Anda (2000 karakter) telah habis. Berlangganan: https://saygo-translator.carrd.co",
+    "hi": "⚠️ आपका मुफ्त अनुवाद कोटा (2000 अक्षर) खत्म। यहां सदस्यता लें: https://saygo-translator.carrd.co",
+    "it": "⚠️ Hai esaurito la quota gratuita (2000 caratteri). Abbonati qui: https://saygo-translator.carrd.co",
+    "pt": "⚠️ Sua cota grátis (2000 caracteres) acabou. Assine aqui: https://saygo-translator.carrd.co",
+    "ru": "⚠️ Ваш бесплатный лимит (2000 символов) исчерпан. Подписаться: https://saygo-translator.carrd.co",
+    "ar": "⚠️ لقد استنفدت حصة الترجمة المجانية (2000 حرف). اشترك هنا: https://saygo-translator.carrd.co"
 }
 
 flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical","contents":[{"type":"text","text":"🌍 Please select translation language","weight":"bold","size":"lg","align":"center"}],"backgroundColor":"#FFCC80"},"body":{"type":"box","layout":"vertical","spacing":"sm","contents":[
