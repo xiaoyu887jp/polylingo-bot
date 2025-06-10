@@ -1,3 +1,21 @@
+app = Flask(__name__)
+DATABASE = 'data.db'
+
+# 在这里插入你刚才的代码
+def create_user_quota_table():
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_quota (
+            user_id TEXT PRIMARY KEY,
+            quota INTEGER DEFAULT 2000
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+create_user_quota_table()
+
 def update_user_quota(user_id, text_length):
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
@@ -93,7 +111,7 @@ line_bot_api = LineBotApi(LINE_ACCESS_TOKEN)
 
 user_language_settings = {}
 user_usage = {}
-MONTHLY_FREE_QUOTA = 5000
+MONTHLY_FREE_QUOTA = 2000
 
 LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
 
