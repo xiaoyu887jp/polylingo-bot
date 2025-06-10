@@ -195,10 +195,10 @@ def callback():
             user_avatar = "https://example.com/default_avatar.png"
 
         if event["type"] == "join":
-            user_language_settings[key] = []
-            send_language_selection_card(reply_token)
-            continue
-
+            if not has_sent_card(group_id):
+                user_language_settings[key] = []
+                send_language_selection_card(reply_token)
+                mark_card_sent(group_id) 
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"].strip()
 
