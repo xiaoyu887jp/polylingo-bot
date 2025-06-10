@@ -1,47 +1,12 @@
-app = Flask(__name__)
-DATABASE = 'data.db'
-
-# 在这里插入你刚才的代码
-def create_user_quota_table():
-    conn = sqlite3.connect(DATABASE)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS user_quota (
-            user_id TEXT PRIMARY KEY,
-            quota INTEGER DEFAULT 2000
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-create_user_quota_table()
-
-def update_user_quota(user_id, text_length):
-    conn = sqlite3.connect(DATABASE)
-    cursor = conn.cursor()
-
-    cursor.execute('SELECT quota FROM user_quota WHERE user_id=?', (user_id,))
-    row = cursor.fetchone()
-
-    if row:
-        new_quota = max(0, row[0] - text_length)
-        cursor.execute('UPDATE user_quota SET quota=? WHERE user_id=?', (new_quota, user_id))
-    else:
-        new_quota = max(0, 2000 - text_length)
-        cursor.execute('INSERT INTO user_quota (user_id, quota) VALUES (?, ?)', (user_id, new_quota))
-
-    conn.commit()
-    conn.close()
-    return new_quota
-
-
+# 放在文件最顶部 ✅
+import sqlite3
 import requests, os
 import html
 from flask import Flask, request, jsonify
-import sqlite3 
 from linebot import LineBotApi
 from linebot.models import FlexSendMessage
-from datetime import datetime  # 新增这一行
+from datetime import datetime
+
 
 
 # 检查群组是否已发送过语言卡片
