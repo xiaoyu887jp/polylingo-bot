@@ -38,7 +38,6 @@ def update_user_quota(user_id, text_length):
 
 import requests, os
 import html
-from flask import Flask, request, jsonify
 import sqlite3 
 from linebot import LineBotApi
 from linebot.models import FlexSendMessage
