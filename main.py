@@ -1,4 +1,4 @@
-# 放在文件最顶部 ✅
+# 放在文件最顶部 ✅（确保导入顺序正确）
 import sqlite3
 import requests, os
 import html
@@ -7,9 +7,11 @@ from linebot import LineBotApi
 from linebot.models import FlexSendMessage
 from datetime import datetime
 
+# 初始化 Flask 应用（放在最前面）
+app = Flask(__name__)
+DATABASE = 'data.db'
 
-
-# 检查群组是否已发送过语言卡片
+# ✅ 检查群组是否已发送过语言卡片
 def has_sent_card(group_id):
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
@@ -18,7 +20,7 @@ def has_sent_card(group_id):
     conn.close()
     return row and row[0] == 1
 
-# 标记群组为已发送过语言卡片
+# ✅ 标记群组为已发送过语言卡片
 def mark_card_sent(group_id):
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
@@ -26,6 +28,7 @@ def mark_card_sent(group_id):
     conn.commit()
     conn.close()
 
+# ✅ 更新用户的使用量（每条翻译调用时更新）
 def update_usage(group_id, user_id, text_length):
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
@@ -53,6 +56,7 @@ def update_usage(group_id, user_id, text_length):
     conn.commit()
     conn.close()
 
+# ✅ 获取当前使用量（用于判断是否超额）
 def get_current_usage(group_id, user_id):
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
@@ -66,6 +70,7 @@ def get_current_usage(group_id, user_id):
 
     conn.close()
     return row[0] if row else 0
+
 
 
 LINE_ACCESS_TOKEN = "B3blv9hwkVhaXvm9FEpijEck8hxdiNIhhlXD9A+OZDGGYhn3mEqs71gF1i88JV/7Uh+ZM9mOBOzQlhZNZhl6vtF9X/1j3gyfiT2NxFGRS8B6I0ZTUR0J673O21pqSdIJVTk3rtvWiNkFov0BTlVpuAdB04t89/1O/w1cDnyilFU="
