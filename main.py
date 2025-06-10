@@ -36,12 +36,17 @@ def update_user_quota(user_id, text_length):
     return new_quota
 
 
+from flask import Flask, request, jsonify
+import sqlite3    # ← 必须添加这行！
 import requests, os
 import html
-import sqlite3 
 from linebot import LineBotApi
 from linebot.models import FlexSendMessage
-from datetime import datetime  # 新增这一行
+from datetime import datetime
+
+app = Flask(__name__)
+DATABASE = 'data.db'
+
 
 
 # 检查群组是否已发送过语言卡片
