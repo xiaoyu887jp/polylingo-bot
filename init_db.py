@@ -1,6 +1,6 @@
 import sqlite3
 
-DATABASE = 'data.db'
+DATABASE = '/var/data/data.db'
 
 def create_user_quota_table():
     conn = sqlite3.connect(DATABASE)
