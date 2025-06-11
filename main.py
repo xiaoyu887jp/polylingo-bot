@@ -9,7 +9,7 @@ from datetime import datetime
 
 # 初始化 Flask 应用（放在最前面）
 app = Flask(__name__)
-DATABASE = 'data.db'
+DATABASE = '/var/data/data.db'
 
 # ✅ 检查群组是否已发送过语言卡片
 def has_sent_card(group_id):
