@@ -256,11 +256,14 @@ def callback():
                         }
                     })
 
-                  
-                    if usage >= MONTHLY_FREE_QUOTA:
-                        quota_message = quota_messages.get(lang, quota_messages["en"])
-                        messages.append({"type": "text", "text": quota_message})
-                        break
+                   if new_quota <= 0:
+                      quota_message = quota_messages.get(langs[0], quota_messages["en"])
+                      messages.append({"type": "text", "text": quota_message})
+
+                   # if usage >= MONTHLY_FREE_QUOTA:
+                       # quota_message = quota_messages.get(lang, quota_messages["en"])
+                      # messages.append({"type": "text", "text": quota_message})
+                       # break
             update_usage(group_id, user_id, len(user_text))
 
 
