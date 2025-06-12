@@ -204,6 +204,8 @@ def callback():
                 user_language_settings[key] = []
                 send_language_selection_card(reply_token)
                 mark_card_sent(group_id) 
+                continue  # 加continue
+
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"].strip()
 
@@ -226,12 +228,6 @@ def callback():
                 send_language_selection_card(reply_token)
                 continue
 
-            #update_usage(group_id, user_id, len(user_text))
-            #usage = get_current_usage(group_id, user_id)
-
-
-           
-
             messages = []
             new_quota = update_user_quota(user_id, len(user_text))
 
@@ -244,35 +240,23 @@ def callback():
 
                     if user_avatar != "https://example.com/default_avatar.png":
                         sender_icon = user_avatar
-
                     else:
-                         sender_icon = "https://i.imgur.com/sTqykvy.png"
+                        sender_icon = "https://i.imgur.com/sTqykvy.png"
 
                     messages.append({
-                         "type": "text",
-                         "text": translated_text,
-                         "sender": {
-                             "name": f"Saygo ({lang})",
-                             "iconUrl": sender_icon
+                        "type": "text",
+                        "text": translated_text,
+                        "sender": {
+                            "name": f"Saygo ({lang})",
+                            "iconUrl": sender_icon
                         }
                     })
+                update_usage(group_id, user_id, len(user_text))  # 位置正确
 
-    if new_quota <= 0:
-               
-       quota_message = quota_messages.get(langs[0], quota_messages["en"])
-       messages.append({"type": "text", "text": quota_message})
-
-                   # if usage >= MONTHLY_FREE_QUOTA:
-                       # quota_message = quota_messages.get(lang, quota_messages["en"])
-                      # messages.append({"type": "text", "text": quota_message})
-                       # break
-        update_usage(group_id, user_id, len(user_trxt))
-       
-
-
-        reply_to_line(reply_token, messages)
+            reply_to_line(reply_token, messages)
 
     return jsonify(success=True), 200
+
 
 
 @app.route('/stripe-webhook', methods=['POST'])
