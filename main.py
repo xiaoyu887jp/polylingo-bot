@@ -29,7 +29,7 @@ def mark_card_sent(group_id):
     conn.close()
 
 # ✅ 更新用户的使用量（每条翻译调用时更新）
-def update_usage(group_id, user_id, text_length):
+def update_usage(group_id, user_id, text_length):29行
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
     current_month = datetime.now().strftime("%Y-%m")
@@ -266,7 +266,7 @@ def callback():
                        # quota_message = quota_messages.get(lang, quota_messages["en"])
                       # messages.append({"type": "text", "text": quota_message})
                        # break
-        update_usage(group_id, user_id, len(user_text))
+        
 
 
         reply_to_line(reply_token, messages)
