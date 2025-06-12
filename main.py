@@ -29,7 +29,7 @@ def mark_card_sent(group_id):
     conn.close()
 
 # ✅ 更新用户的使用量（每条翻译调用时更新）
-def update_usage(group_id, user_id, text_length):29行
+def update_usage(group_id, user_id, text_length):
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
     current_month = datetime.now().strftime("%Y-%m")
