@@ -266,8 +266,8 @@ def callback():
                        # quota_message = quota_messages.get(lang, quota_messages["en"])
                       # messages.append({"type": "text", "text": quota_message})
                        # break
-        update_usage(group_id, user_id, len(user_text))
-
+        update_usage(group_id, user_id, len(user_trxt))
+       
 
 
         reply_to_line(reply_token, messages)
