@@ -269,7 +269,6 @@ def stripe_webhook():
         customer_email = data['data']['object']['customer_details']['email']
         plan = metadata.get('plan', 'Unknown')
 
-        # 根据套餐方案确定额度
         quota_mapping = {
             'Starter': 300000,   # 30万字
             'Basic': 1000000,    # 100万字
@@ -278,13 +277,16 @@ def stripe_webhook():
         }
 
         quota_amount = quota_mapping.get(plan, 0)
+        user_id = update_user_quota_by_email(customer_email, quota_amount)
 
-        # 更新用户额度（基于邮箱）
-        update_user_quota_by_email(customer_email, quota_amount)
+        # 主动发送Line消息通知用户订阅成功
+        message = f"🎉 订阅成功！你的套餐为：{plan}，额度已更新为：{quota_amount}字。感谢你的订阅！"
+        line_bot_api.push_message(user_id, TextSendMessage(text=message))
 
         print(f"付款成功: {customer_email}, 方案: {plan}, 额度: {quota_amount}")
 
     return jsonify(success=True), 200
+
 
 
 # 新增的辅助函数（更新额度用）
