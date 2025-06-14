@@ -265,11 +265,50 @@ def stripe_webhook():
     event_type = data['type']
 
     if event_type == 'checkout.session.completed':
+        metadata = data['data']['object']['metadata']
         customer_email = data['data']['object']['customer_details']['email']
-        subscription_id = data['data']['object']['subscription']
-        print("付款成功:", customer_email, subscription_id)
+        plan = metadata.get('plan', 'Unknown')
+
+        # 根据套餐方案确定额度
+        quota_mapping = {
+            'Starter': 300000,   # 30万字
+            'Basic': 1000000,    # 100万字
+            'Pro': 2000000,      # 200万字
+            'Expert': 4000000    # 400万字
+        }
+
+        quota_amount = quota_mapping.get(plan, 0)
+
+        # 更新用户额度（基于邮箱）
+        update_user_quota_by_email(customer_email, quota_amount)
+
+        print(f"付款成功: {customer_email}, 方案: {plan}, 额度: {quota_amount}")
 
     return jsonify(success=True), 200
+
+
+# 新增的辅助函数（更新额度用）
+def update_user_quota_by_email(email, quota_amount):
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+
+    # 查找或创建用户
+    cursor.execute("SELECT user_id FROM users WHERE email=?", (email,))
+    row = cursor.fetchone()
+
+    if row:
+        user_id = row[0]
+        # 已存在用户，更新额度
+        cursor.execute("UPDATE user_quota SET quota=? WHERE user_id=?", (quota_amount, user_id))
+    else:
+        # 不存在用户，新建用户并初始化额度
+        cursor.execute("INSERT INTO users (email) VALUES (?)", (email,))
+        user_id = cursor.lastrowid
+        cursor.execute("INSERT INTO user_quota (user_id, quota) VALUES (?, ?)", (user_id, quota_amount))
+
+    conn.commit()
+    conn.close()
+
 
 
 if __name__ == "__main__":
