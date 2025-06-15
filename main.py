@@ -311,6 +311,8 @@ def update_user_quota_by_email(email, quota_amount):
 
     conn.commit()
     conn.close()
+    
+    return user_id
 
 
 
