@@ -98,7 +98,7 @@ quota_messages = {
     "id": "⚠️ Kuota gratis Anda (5000 karakter) telah habis. Berlangganan: https://saygo-translator.carrd.co",
     "hi": "⚠️ आपका मुफ्त अनुवाद कोटा (5000 अक्षर) खत्म। यहां सदस्यता लें: https://saygo-translator.carrd.co",
     "it": "⚠️ Hai esaurito la quota gratuita (5000 caratteri). Abbonati qui: https://saygo-translator.carrd.co",
-   下载你去的地方没有车去不了你告诉我我把几个计画发给你然后再订去拿必须做功课你来之前必须告诉我我可以给你几个方案这样比较保险
+
     {"type":"button","style":"primary","color":"#33CC66","action":{"type":"message","label":"🇨🇳 简体中文","text":"zh-cn"}},
     {"type":"button","style":"primary","color":"#3399FF","action":{"type":"message","label":"🇹🇼 繁體中文","text":"zh-tw"}},
     {"type":"button","style":"primary","color":"#FF6666","action":{"type":"message","label":"🇯🇵 日本語","text":"ja"}},
