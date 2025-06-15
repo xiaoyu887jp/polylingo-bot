@@ -4,7 +4,7 @@ import requests, os
 import html
 from flask import Flask, request, jsonify
 from linebot import LineBotApi
-from linebot.models import FlexSendMessage
+from linebot.models import FlexSendMessage, TextSendMessage
 from datetime import datetime
 
 # 初始化 Flask 应用（放在最前面）
