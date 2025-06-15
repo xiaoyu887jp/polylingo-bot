@@ -80,31 +80,25 @@ line_bot_api = LineBotApi(LINE_ACCESS_TOKEN)
 
 user_language_settings = {}
 user_usage = {}
-MONTHLY_FREE_QUOTA = 2000
+MONTHLY_FREE_QUOTA = 5000
 
 LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
 
 quota_messages = {
-     "en": "⚠️ Your free translation quota (2000 characters) has been exhausted. Subscribe here: https://saygo-translator.carrd.co",
-    "zh-tw": "⚠️ 您的免費翻譯額度（2000字）已使用完畢。請點擊訂閱：https://saygo-translator.carrd.co",
-    "zh-cn": "⚠️ 您的免费翻译额度（2000字）已用完。请点击订阅：https://saygo-translator.carrd.co",
-    "ja": "⚠️ 無料翻訳枠（2000文字）を使い切りました。登録はこちら：https://saygo-translator.carrd.co",
-    "ko": "⚠️ 무료 번역 한도(2000자)를 초과했습니다. 구독하기: https://saygo-translator.carrd.co",
-    "th": "⚠️ คุณใช้โควต้าการแปลฟรี (2000 ตัวอักษร) หมดแล้ว สมัครที่นี่: https://saygo-translator.carrd.co",
-    "vi": "⚠️ Bạn đã dùng hết hạn ngạch miễn phí (2000 ký tự). Đăng ký tại đây: https://saygo-translator.carrd.co",
-    "fr": "⚠️ Vous avez épuisé votre quota gratuit (2000 caractères). Abonnez-vous ici : https://saygo-translator.carrd.co",
-    "es": "⚠️ Has agotado tu cuota gratuita (2000 caracteres). Suscríbete aquí: https://saygo-translator.carrd.co",
-    "de": "⚠️ Ihr kostenloses Limit (2000 Zeichen) ist erschöpft. Hier abonnieren: https://saygo-translator.carrd.co",
-    "id": "⚠️ Kuota gratis Anda (2000 karakter) telah habis. Berlangganan: https://saygo-translator.carrd.co",
-    "hi": "⚠️ आपका मुफ्त अनुवाद कोटा (2000 अक्षर) खत्म। यहां सदस्यता लें: https://saygo-translator.carrd.co",
-    "it": "⚠️ Hai esaurito la quota gratuita (2000 caratteri). Abbonati qui: https://saygo-translator.carrd.co",
-    "pt": "⚠️ Sua cota grátis (2000 caracteres) acabou. Assine aqui: https://saygo-translator.carrd.co",
-    "ru": "⚠️ Ваш бесплатный лимит (2000 символов) исчерпан. Подписаться: https://saygo-translator.carrd.co",
-    "ar": "⚠️ لقد استنفدت حصة الترجمة المجانية (2000 حرف). اشترك هنا: https://saygo-translator.carrd.co"
-}
-
-flex_message_json = {"type":"bubble","header":{"type":"box","layout":"vertical","contents":[{"type":"text","text":"🌍 Please select translation language","weight":"bold","size":"lg","align":"center"}],"backgroundColor":"#FFCC80"},"body":{"type":"box","layout":"vertical","spacing":"sm","contents":[
-    {"type":"button","style":"primary","color":"#4CAF50","action":{"type":"message","label":"🇺🇸 English","text":"en"}},
+     "en": "⚠️ Your free translation quota (5000 characters) has been exhausted. Subscribe here: https://saygo-translator.carrd.co",
+    "zh-tw": "⚠️ 您的免費翻譯額度（5000字）已使用完畢。請點擊訂閱：https://saygo-translator.carrd.co",
+    "zh-cn": "⚠️ 您的免费翻译额度（5000字）已用完。请点击订阅：https://saygo-translator.carrd.co",
+    "ja": "⚠️ 無料翻訳枠（5000文字）を使い切りました。登録はこちら：https://saygo-translator.carrd.co",
+    "ko": "⚠️ 무료 번역 한도(5000자)를 초과했습니다. 구독하기: https://saygo-translator.carrd.co",
+    "th": "⚠️ คุณใช้โควต้าการแปลฟรี (5000 ตัวอักษร) หมดแล้ว สมัครที่นี่: https://saygo-translator.carrd.co",
+    "vi": "⚠️ Bạn đã dùng hết hạn ngạch miễn phí (5000 ký tự). Đăng ký tại đây: https://saygo-translator.carrd.co",
+    "fr": "⚠️ Vous avez épuisé votre quota gratuit (5000 caractères). Abonnez-vous ici : https://saygo-translator.carrd.co",
+    "es": "⚠️ Has agotado tu cuota gratuita (5000 caracteres). Suscríbete aquí: https://saygo-translator.carrd.co",
+    "de": "⚠️ Ihr kostenloses Limit (5000 Zeichen) ist erschöpft. Hier abonnieren: https://saygo-translator.carrd.co",
+    "id": "⚠️ Kuota gratis Anda (5000 karakter) telah habis. Berlangganan: https://saygo-translator.carrd.co",
+    "hi": "⚠️ आपका मुफ्त अनुवाद कोटा (5000 अक्षर) खत्म। यहां सदस्यता लें: https://saygo-translator.carrd.co",
+    "it": "⚠️ Hai esaurito la quota gratuita (5000 caratteri). Abbonati qui: https://saygo-translator.carrd.co",
+   下载你去的地方没有车去不了你告诉我我把几个计画发给你然后再订去拿必须做功课你来之前必须告诉我我可以给你几个方案这样比较保险
     {"type":"button","style":"primary","color":"#33CC66","action":{"type":"message","label":"🇨🇳 简体中文","text":"zh-cn"}},
     {"type":"button","style":"primary","color":"#3399FF","action":{"type":"message","label":"🇹🇼 繁體中文","text":"zh-tw"}},
     {"type":"button","style":"primary","color":"#FF6666","action":{"type":"message","label":"🇯🇵 日本語","text":"ja"}},
@@ -165,7 +159,7 @@ def update_user_quota(user_id, text_length):
         new_quota = max(row[0] - text_length, 0)
         cursor.execute('UPDATE user_quota SET quota=? WHERE user_id=?', (new_quota, user_id))
     else:
-        new_quota = max(2000 - text_length, 0)
+        new_quota = max(5000 - text_length, 0)
         cursor.execute('INSERT INTO user_quota (user_id, quota) VALUES (?, ?)', (user_id, new_quota))
 
     conn.commit()
