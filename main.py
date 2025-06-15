@@ -82,7 +82,7 @@ user_language_settings = {}
 user_usage = {}
 MONTHLY_FREE_QUOTA = 5000
 
-LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
+LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"
 
 quota_messages = {
      "en": "⚠️ Your free translation quota (5000 characters) has been exhausted. Subscribe here: https://saygo-translator.carrd.co",
