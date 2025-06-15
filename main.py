@@ -185,7 +185,7 @@ def callback():
         group_id = source.get("groupId", "private")
         user_id = source.get("userId", "unknown")
         key = f"{group_id}_{user_id}"
-        reply_to_line(reply_token, [{"type": "text", "text": f"你的LINE用户ID是: {user_id}"}])
+        #reply_to_line(reply_token, [{"type": "text", "text": f"你的LINE用户ID是: {user_id}"}])
 
         profile_res = requests.get(
             f"https://api.line.me/v2/bot/profile/{user_id}",
