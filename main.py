@@ -271,22 +271,26 @@ def stripe_webhook():
         plan = metadata.get('plan', 'Unknown')
 
         quota_mapping = {
-            'Starter': 300000,   # 30万字
-            'Basic': 1000000,    # 100万字
-            'Pro': 2000000,      # 200万字
-            'Expert': 4000000    # 400万字
+            'Starter': 300000,
+            'Basic': 1000000,
+            'Pro': 2000000,
+            'Expert': 4000000
         }
 
         quota_amount = quota_mapping.get(plan, 0)
         user_id = update_user_quota_by_email(customer_email, quota_amount)
 
-        # 主动发送Line消息通知用户订阅成功
-        message = f"🎉 订阅成功！你的套餐为：{plan}，额度已更新为：{quota_amount}字。感谢你的订阅！"
-        line_bot_api.push_message(user_id, TextSendMessage(text=message))
+        message = f"🎉 Subscription successful! Your plan: {plan}, quota updated to: {quota_amount} characters. Thanks for subscribing!"
 
-        print(f"付款成功: {customer_email}, 方案: {plan}, 额度: {quota_amount}")
+        try:
+            line_bot_api.push_message(user_id, TextSendMessage(text=message))
+            print(f"✅ 已成功发送消息给用户: {user_id}")
+        except Exception as e:
+            print(f"⚠️ 发送Line消息失败，错误原因: {e}")
 
+    # 不管是否成功发送消息，都必须返回200状态，避免Stripe重试
     return jsonify(success=True), 200
+
 
 
 
