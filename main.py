@@ -233,26 +233,48 @@ def callback():
             messages = []
             new_quota = update_user_quota(user_id, len(user_text))
 
-if new_quota <= 0:
-    # 检查群组是否已订阅
-    if is_group_subscribed(group_id):
-        # 群组已订阅，直接用群组额度
-        new_group_quota = update_group_quota(group_id, len(user_text))
-        if new_group_quota <= 0:
-            quota_message = "⚠️ 本群已订阅，但群组额度已用完，请升级订阅。"
-            messages.append({"type": "text", "text": quota_message})
-        else:
-            # 群组额度充足，不提示，正常继续翻译
-            pass
-    else:
-        # 群组未订阅，提示全群订阅
-        quota_message = (
-            f"⚠️ Your free quota is exhausted. The group needs to subscribe here:\n"
-            f"https://saygo-translator.carrd.co?group_id={group_id}\n\n"
-            f"⚠️ 您的免费额度已用完，此群需要订阅付费方案：\n"
-            f"https://saygo-translator.carrd.co?group_id={group_id}"
-        )
-        messages.append({"type": "text", "text": quota_message})
+            if new_quota <= 0:
+                # 检查群组是否已订阅
+                if is_group_subscribed(group_id):
+                    # 群组已订阅，直接用群组额度
+                    new_group_quota = update_group_quota(group_id, len(user_text))
+                    if new_group_quota <= 0:
+                        quota_message = "⚠️ 本群已订阅，但群组额度已用完，请升级订阅。"
+                        messages.append({"type": "text", "text": quota_message})
+                    else:
+                        # 群组额度充足，不提示，正常继续翻译
+                        pass
+                else:
+                    # 群组未订阅，提示全群订阅
+                    quota_message = (
+                        f"⚠️ Your free quota is exhausted. The group needs to subscribe here:\n"
+                        f"https://saygo-translator.carrd.co?group_id={group_id}\n\n"
+                        f"⚠️ 您的免费额度已用完，此群需要订阅付费方案：\n"
+                        f"https://saygo-translator.carrd.co?group_id={group_id}"
+                    )
+                    messages.append({"type": "text", "text": quota_message})
+            else:
+                for lang in langs:
+                    translated_text = translate(user_text, lang)
+
+                    if user_avatar != "https://example.com/default_avatar.png":
+                        sender_icon = user_avatar
+                    else:
+                        sender_icon = "https://i.imgur.com/sTqykvy.png"
+
+                    messages.append({
+                        "type": "text",
+                        "text": translated_text,
+                        "sender": {
+                            "name": f"Saygo ({lang})",
+                            "iconUrl": sender_icon
+                        }
+                    })
+                update_usage(group_id, user_id, len(user_text))
+
+            reply_to_line(reply_token, messages)
+
+    return jsonify(success=True), 200
 
 
 
