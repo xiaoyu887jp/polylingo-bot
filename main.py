@@ -185,7 +185,6 @@ def callback():
         group_id = source.get("groupId", "private")
         user_id = source.get("userId", "unknown")
         key = f"{group_id}_{user_id}"
-        #reply_to_line(reply_token, [{"type": "text", "text": f"你的LINE用户ID是: {user_id}"}])
 
         profile_res = requests.get(
             f"https://api.line.me/v2/bot/profile/{user_id}",
@@ -204,8 +203,8 @@ def callback():
             if not has_sent_card(group_id):
                 user_language_settings[key] = []
                 send_language_selection_card(reply_token)
-                mark_card_sent(group_id) 
-                continue  # 加continue
+                mark_card_sent(group_id)
+                continue
 
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"].strip()
@@ -238,8 +237,8 @@ def callback():
                     f"https://saygo-translator.carrd.co?line_id={user_id}\n\n"
                     f"⚠️ 您的免费额度已用完，请点击这里订阅：\n"
                     f"https://saygo-translator.carrd.co?line_id={user_id}"
-                 )
-                 messages.append({"type": "text", "text": quota_message})
+                )
+                messages.append({"type": "text", "text": quota_message})
             else:
                 for lang in langs:
                     translated_text = translate(user_text, lang)
@@ -257,12 +256,11 @@ def callback():
                             "iconUrl": sender_icon
                         }
                     })
-                update_usage(group_id, user_id, len(user_text))  # 位置正确
+                update_usage(group_id, user_id, len(user_text))
 
             reply_to_line(reply_token, messages)
 
     return jsonify(success=True), 200
-
 
 
 @app.route('/stripe-webhook', methods=['POST'])
