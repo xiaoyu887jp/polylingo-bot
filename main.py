@@ -155,7 +155,6 @@ def translate(text, target_language):
     else:
         return "Translation error."
 def update_group_quota(group_id, text_length):
-
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
 
@@ -231,50 +230,7 @@ def callback():
                 continue
 
             messages = []
-            new_quota = update_user_quota(user_id, len(user_text))
-
-            if new_quota <= 0:
-                if is_group_subscribed(group_id):
-                    new_group_quota = update_group_quota(group_id, len(user_text))
-                    if new_group_quota <= 0:
-                        quota_message = "⚠️ 本群已订阅，但群组额度已用完，请升级订阅。"
-                        messages.append({"type": "text", "text": quota_message})
-                    else:
-                        pass
-                else:
-                    quota_message = (
-                        f"⚠️ Your free quota is exhausted. The group needs to subscribe here:\n"
-                        f"https://saygo-translator.carrd.co?group_id={group_id}\n\n"
-                        f"⚠️ 您的免费额度已用完，此群需要订阅付费方案：\n"
-                        f"https://saygo-translator.carrd.co?group_id={group_id}"
-                    )
-                    messages.append({"type": "text", "text": quota_message})
-
-            else:
-                for lang in langs:
-                    translated_text = translate(user_text, lang)
-
-                    if user_avatar != "https://example.com/default_avatar.png":
-                        sender_icon = user_avatar
-                    else:
-                        sender_icon = "https://i.imgur.com/sTqykvy.png"
-
-                    messages.append({
-                        "type": "text",
-                        "text": translated_text,
-                        "sender": {
-                            "name": f"Saygo ({lang})",
-                            "iconUrl": sender_icon
-                        }
-                    })
-                update_usage(group_id, user_id, len(user_text))
-
-            reply_to_line(reply_token, messages)
-
-    return jsonify(success=True), 200  # 缩进与for event in events:对齐
-
-
-
+            new_quota = update_group_quota(group_id, len(user_text))
 
 
             if new_quota <= 0:
