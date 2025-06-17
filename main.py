@@ -229,7 +229,8 @@ def callback():
                 continue
 
             messages = []
-            new_quota = update_user_quota(user_id, len(user_text))
+            new_quota = update_group_quota(group_id, len(user_text))
+
 
             if new_quota <= 0:
                 quota_message = (
