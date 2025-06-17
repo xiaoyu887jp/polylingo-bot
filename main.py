@@ -154,24 +154,25 @@ def translate(text, target_language):
         return translated_text
     else:
         return "Translation error."
-def update_user_quota(user_id, text_length):
+def update_group_quota(group_id, text_length):
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
-    
-    cursor.execute('SELECT quota FROM user_quota WHERE user_id=?', (user_id,))
+
+    cursor.execute('SELECT quota FROM group_quota WHERE group_id=?', (group_id,))
     row = cursor.fetchone()
 
     if row:
         new_quota = max(row[0] - text_length, 0)
-        cursor.execute('UPDATE user_quota SET quota=? WHERE user_id=?', (new_quota, user_id))
+        cursor.execute('UPDATE group_quota SET quota=? WHERE group_id=?', (new_quota, group_id))
     else:
         new_quota = max(5000 - text_length, 0)
-        cursor.execute('INSERT INTO user_quota (user_id, quota) VALUES (?, ?)', (user_id, new_quota))
+        cursor.execute('INSERT INTO group_quota (group_id, quota) VALUES (?, ?)', (group_id, new_quota))
 
     conn.commit()
     conn.close()
 
     return new_quota
+
 
 @app.route("/callback", methods=["POST"])
 def callback():
