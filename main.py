@@ -269,7 +269,7 @@ def callback():
                             "name": f"Saygo ({lang})",
                             "iconUrl": sender_icon
                         }
-                    })
+                    }
                 update_usage(group_id, user_id, len(user_text))
 
             reply_to_line(reply_token, messages)
