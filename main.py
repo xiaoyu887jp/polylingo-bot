@@ -233,8 +233,13 @@ def callback():
             new_quota = update_user_quota(user_id, len(user_text))
 
             if new_quota <= 0:
-                quota_message = quota_messages.get(langs[0], quota_messages["en"])
-                messages.append({"type": "text", "text": quota_message})
+                quota_message = (
+                    f"⚠️ Your free quota is exhausted. Please subscribe here:\n"
+                    f"https://saygo-translator.carrd.co?line_id={user_id}\n\n"
+                    f"⚠️ 您的免费额度已用完，请点击这里订阅：\n"
+                    f"https://saygo-translator.carrd.co?line_id={user_id}"
+                 )
+                 messages.append({"type": "text", "text": quota_message})
             else:
                 for lang in langs:
                     translated_text = translate(user_text, lang)
