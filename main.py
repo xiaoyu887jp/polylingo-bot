@@ -209,10 +209,10 @@ def callback():
         reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {langs}"}])
         continue
 
-            if user_text in ["/reset", "/re", "/resetlang"]:
-                send_language_selection_card(reply_token)
-                mark_card_sent(group_id)
-                continue
+    if user_text in ["/reset", "/re", "/resetlang"]:
+        send_language_selection_card(reply_token)
+        mark_card_sent(group_id)
+        continue
 
             langs = user_language_settings.get(key, [])
             if not langs:
