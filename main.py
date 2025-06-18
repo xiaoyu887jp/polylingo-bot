@@ -193,18 +193,17 @@ def callback():
             headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
         )
 
+        user_avatar = "https://example.com/default_avatar.png"
         if profile_res.status_code == 200:
             profile_data = profile_res.json()
-            user_avatar = profile_data.get("pictureUrl", "")
-        else:
-            user_avatar = "https://example.com/default_avatar.png"
+            user_avatar = profile_data.get("pictureUrl", user_avatar)
 
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"].strip()
 
             if user_text in ["/reset", "/re", "/resetlang"]:
-                user_language_settings[key] = []
                 send_language_selection_card(reply_token)
+                mark_card_sent(group_id)
                 continue
 
             langs = user_language_settings.get(key, [])
@@ -214,32 +213,21 @@ def callback():
                     mark_card_sent(group_id)
                 continue
 
-            new_quota = update_user_quota(user_id, len(user_text))
-
             messages = []
+            group_current_quota = update_group_quota(group_id, len(user_text))
 
-            if new_quota <= 0:
-                if is_group_subscribed(group_id):
-                    new_group_quota = update_group_quota(group_id, len(user_text))
-                    if new_group_quota <= 0:
-                        quota_message = "⚠️ 本群已订阅，但群组额度已用完，请升级订阅。"
-                        messages.append({"type": "text", "text": quota_message})
-                        reply_to_line(reply_token, messages)
-                        continue
-                else:
-                    quota_message = (
-                        f"⚠️ Your free quota is exhausted. The group needs to subscribe here:\n"
-                        f"https://saygo-translator.carrd.co?group_id={group_id}\n\n"
-                        f"⚠️ 您的免费额度已用完，此群需要订阅付费方案：\n"
-                        f"https://saygo-translator.carrd.co?group_id={group_id}"
-                    )
-                    messages.append({"type": "text", "text": quota_message})
-                    reply_to_line(reply_token, messages)
-                    continue
+            if group_current_quota <= 0:
+                quota_message = (
+                    f"⚠️ 群组额度已用完，需订阅付费方案：\n"
+                    f"https://saygo-translator.carrd.co?group_id={group_id}"
+                )
+                messages.append({"type": "text", "text": quota_message})
+                reply_to_line(reply_token, messages)
+                continue
 
             for lang in langs:
                 translated_text = translate(user_text, lang)
-                sender_icon = user_avatar if user_avatar != "https://example.com/default_avatar.png" else "https://i.imgur.com/sTqykvy.png"
+                sender_icon = user_avatar if user_avatar else "https://i.imgur.com/sTqykvy.png"
                 messages.append({
                     "type": "text",
                     "text": translated_text,
@@ -250,6 +238,7 @@ def callback():
             reply_to_line(reply_token, messages)
 
     return jsonify(success=True), 200
+
 
 
 
