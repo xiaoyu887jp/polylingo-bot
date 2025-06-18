@@ -200,6 +200,14 @@ def callback():
 
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"].strip()
+        if user_text in LANGUAGES:
+            if key not in user_language_settings:
+                user_language_settings[key] = []
+            if user_text not in user_language_settings[key]:
+                user_language_settings[key].append(user_text)
+        langs = ', '.join(user_language_settings[key])
+        reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {langs}"}])
+        continue
 
             if user_text in ["/reset", "/re", "/resetlang"]:
                 send_language_selection_card(reply_token)
