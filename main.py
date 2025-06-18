@@ -177,7 +177,6 @@ def update_group_quota(group_id, text_length):
 @app.route("/callback", methods=["POST"])
 def callback():
     events = request.get_json().get("events", [])
-
     for event in events:
         reply_token = event.get("replyToken")
         if not reply_token:
@@ -193,61 +192,77 @@ def callback():
             headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
         )
 
-        user_avatar = "https://example.com/default_avatar.png"
         if profile_res.status_code == 200:
             profile_data = profile_res.json()
-            user_avatar = profile_data.get("pictureUrl", user_avatar)
+            user_name = profile_data.get("displayName", "User")
+            user_avatar = profile_data.get("pictureUrl", "")
+        else:
+            user_name = "User"
+            user_avatar = "https://example.com/default_avatar.png"
+
+        if event["type"] == "join":
+            if not has_sent_card(group_id):
+                user_language_settings[key] = []
+                send_language_selection_card(reply_token)
+                mark_card_sent(group_id)
+                continue
 
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"].strip()
-        if user_text in LANGUAGES:
-            if key not in user_language_settings:
+
+            if user_text in ["/reset", "/re", "/resetlang"]:
                 user_language_settings[key] = []
-            if user_text not in user_language_settings[key]:
-                user_language_settings[key].append(user_text)
-        langs = ', '.join(user_language_settings[key])
-        reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {langs}"}])
-        continue
+                send_language_selection_card(reply_token)
+                continue
 
-    if user_text in ["/reset", "/re", "/resetlang"]:
-        send_language_selection_card(reply_token)
-        mark_card_sent(group_id)
-        continue
+            if user_text in LANGUAGES:
+                if key not in user_language_settings:
+                    user_language_settings[key] = []
+                if user_text not in user_language_settings[key]:
+                    user_language_settings[key].append(user_text)
+                langs = ', '.join(user_language_settings[key])
+                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {langs}"}])
+                continue
 
-        langs = user_language_settings.get(key, [])
+            langs = user_language_settings.get(key, [])
             if not langs:
-                if not has_sent_card(group_id):
-                    send_language_selection_card(reply_token)
-                    mark_card_sent(group_id)
+                send_language_selection_card(reply_token)
                 continue
 
             messages = []
-            group_current_quota = update_group_quota(group_id, len(user_text))
+            new_quota = update_group_quota(group_id, len(user_text))
 
-            if group_current_quota <= 0:
+
+            if new_quota <= 0:
                 quota_message = (
-                    f"⚠️ 群组额度已用完，需订阅付费方案：\n"
-                    f"https://saygo-translator.carrd.co?group_id={group_id}"
+                    f"⚠️ Your free quota is exhausted. Please subscribe here:\n"
+                    f"https://saygo-translator.carrd.co?line_id={user_id}\n\n"
+                    f"⚠️ 您的免费额度已用完，请点击这里订阅：\n"
+                    f"https://saygo-translator.carrd.co?line_id={user_id}"
                 )
                 messages.append({"type": "text", "text": quota_message})
-                reply_to_line(reply_token, messages)
-                continue
+            else:
+                for lang in langs:
+                    translated_text = translate(user_text, lang)
 
-            for lang in langs:
-                translated_text = translate(user_text, lang)
-                sender_icon = user_avatar if user_avatar else "https://i.imgur.com/sTqykvy.png"
-                messages.append({
-                    "type": "text",
-                    "text": translated_text,
-                    "sender": {"name": f"Saygo ({lang})", "iconUrl": sender_icon}
-                })
+                    if user_avatar != "https://example.com/default_avatar.png":
+                        sender_icon = user_avatar
+                    else:
+                        sender_icon = "https://i.imgur.com/sTqykvy.png"
 
-            update_usage(group_id, user_id, len(user_text))
+                    messages.append({
+                        "type": "text",
+                        "text": translated_text,
+                        "sender": {
+                            "name": f"Saygo ({lang})",
+                            "iconUrl": sender_icon
+                        }
+                    })
+                update_usage(group_id, user_id, len(user_text))
+
             reply_to_line(reply_token, messages)
 
     return jsonify(success=True), 200
-
-
 
 
 @app.route('/stripe-webhook', methods=['POST'])
