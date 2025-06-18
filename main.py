@@ -214,7 +214,7 @@ def callback():
         mark_card_sent(group_id)
         continue
 
-            langs = user_language_settings.get(key, [])
+        langs = user_language_settings.get(key, [])
             if not langs:
                 if not has_sent_card(group_id):
                     send_language_selection_card(reply_token)
