@@ -207,6 +207,17 @@ def callback():
                 mark_card_sent(group_id)
                 continue
 
+        if event["type"] == "leave":
+            group_id = source.get("groupId")
+            if group_id:
+                conn = sqlite3.connect(DATABASE)
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM group_settings WHERE group_id=?', (group_id,))
+                conn.commit()
+                conn.close()
+            continue
+    
+
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"].strip()
 
