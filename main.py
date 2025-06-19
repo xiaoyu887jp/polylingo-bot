@@ -201,11 +201,12 @@ def callback():
             user_avatar = "https://example.com/default_avatar.png"
 
         if event["type"] == "join":
+            group_id = source.get("groupId")
             if group_id and not has_sent_card(group_id):
-                
                 send_language_selection_card(reply_token)
                 mark_card_sent(group_id)
                 continue
+              
 
         if event["type"] == "leave":
             group_id = source.get("groupId")
