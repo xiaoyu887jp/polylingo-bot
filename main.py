@@ -226,7 +226,9 @@ def callback():
 
             langs = user_language_settings.get(key, [])
             if not langs:
-                send_language_selection_card(reply_token)
+                if not has_sent_card(group_id):  # 确认该群组是否已发送过卡片
+                    send_language_selection_card(reply_token)
+                    mark_card_sent(group_id)
                 continue
 
             messages = []
