@@ -272,7 +272,7 @@ def stripe_webhook():
 
     if event_type == 'checkout.session.completed':
         metadata = data['data']['object']['metadata']
-        customer_email = data['data']['object']['customer_details']['email']
+        group_id = metadata.get('group_id')
         plan = metadata.get('plan', 'Unknown')
 
         quota_mapping = {
@@ -283,18 +283,24 @@ def stripe_webhook():
         }
 
         quota_amount = quota_mapping.get(plan, 0)
-        user_id = update_user_quota_by_email(customer_email, quota_amount)
+        update_group_quota_to_amount(group_id, quota_amount)
 
-        message = f"🎉 Subscription successful! Your plan: {plan}, quota updated to: {quota_amount} characters. Thanks for subscribing!"
+        message = f"🎉 Subscription successful! Plan: {plan}, quota updated to: {quota_amount} characters. Thanks for subscribing!"
 
         try:
-            line_bot_api.push_message(user_id, TextSendMessage(text=message))
-            print(f"✅ 已成功发送消息给用户: {user_id}")
+            line_bot_api.push_message(group_id, TextSendMessage(text=message))
+            print(f"✅ Notification sent successfully to group: {group_id}")
         except Exception as e:
-            print(f"⚠️ 发送Line消息失败，错误原因: {e}")
+            print(f"⚠️ Failed to send notification: {e}")
 
-    # 不管是否成功发送消息，都必须返回200状态，避免Stripe重试
     return jsonify(success=True), 200
+
+def update_group_quota_to_amount(group_id, quota_amount):
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    cursor.execute('INSERT OR REPLACE INTO group_quota (group_id, quota) VALUES (?, ?)', (group_id, quota_amount))
+    conn.commit()
+    conn.close()
 
 
 
