@@ -221,6 +221,18 @@ def callback():
 
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"].strip()
+     
+            if user_text in ["/reset", "/re", "/resetlang"]:
+                user_language_settings[key] = []
+               
+                conn = sqlite3.connect(DATABASE)
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM group_settings WHERE group_id=?', (group_id,))
+                conn.commit()
+                conn.close()
+    
+               send_language_selection_card(reply_token)
+               continue
 
             if not check_user_quota(user_id, len(user_text)):
                 quota_message = (
@@ -229,7 +241,7 @@ def callback():
                 )  
                 reply_to_line(reply_token, [{"type": "text", "text": quota_message}])
                 continue
-
+            
         
 
             if user_text in LANGUAGES:
