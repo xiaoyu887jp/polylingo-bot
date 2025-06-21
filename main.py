@@ -222,10 +222,15 @@ def callback():
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"].strip()
 
-            if user_text in ["/reset", "/re", "/resetlang"]:
-                user_language_settings[key] = []
-                send_language_selection_card(reply_token)
+            if not check_user_quota(user_id, len(user_text)):
+                quota_message = (
+                    f"⚠️ Your free quota has been exhausted. Subscribe here:\n"
+                    f"https://saygo-translator.carrd.co?line_id={user_id}"
+                )  
+                reply_to_line(reply_token, [{"type": "text", "text": quota_message}])
                 continue
+
+        
 
             if user_text in LANGUAGES:
                 if key not in user_language_settings:
