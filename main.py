@@ -348,6 +348,40 @@ def update_user_quota_by_email(email, quota_amount):
     
     return user_id
 
+def check_user_quota(user_id, text_length):
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT quota, is_paid FROM user_quota WHERE user_id=?', (user_id,))
+    row = cursor.fetchone()
+
+    if row:
+        current_quota, is_paid = row
+        if is_paid:
+            conn.close()
+            return True
+        else:
+            result = current_quota >= text_length
+            conn.close()
+            return result
+    else:
+        cursor.execute('INSERT INTO user_quota (user_id, quota, is_paid) VALUES (?, 5000, 0)', (user_id,))
+        conn.commit()
+        conn.close()
+        return 5000 >= text_length
+
+
+def update_user_quota(user_id, text_length):
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        UPDATE user_quota SET quota = quota - ? 
+        WHERE user_id=? AND is_paid=0
+    ''', (text_length, user_id))
+
+    conn.commit()
+    conn.close()
 
 
 if __name__ == "__main__":
