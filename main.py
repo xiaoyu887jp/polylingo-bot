@@ -6,6 +6,8 @@ from flask import Flask, request, jsonify
 from linebot import LineBotApi
 from linebot.models import FlexSendMessage, TextSendMessage
 from datetime import datetime
+import logging
+logging.basicConfig(level=logging.INFO)
 
 # 初始化 Flask 应用（放在最前面）
 app = Flask(__name__)
