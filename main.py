@@ -331,13 +331,13 @@ def stripe_webhook():
             with ApiClient(configuration) as api_client:
                 line_bot_api = MessagingApi(api_client)
 
-                if line_id:  # 如果有个人用户line_id，就向个人推送
+                if line_id:
                     line_bot_api.push_message(
                         line_id,
                         TextMessage(text=message)
                     )
                     logging.info(f"✅ Notification sent successfully to LINE user: {line_id}")
-                elif group_id:  # 否则，向群组推送
+                elif group_id:
                     line_bot_api.push_message(
                         group_id,
                         TextMessage(text=message)
@@ -350,6 +350,7 @@ def stripe_webhook():
             logging.error(f"⚠️ Failed to send notification: {e}")
 
     return jsonify(success=True), 200
+
 
 
 def update_group_quota_to_amount(group_id, quota_amount):
