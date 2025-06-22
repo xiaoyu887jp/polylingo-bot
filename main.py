@@ -305,10 +305,10 @@ def stripe_webhook():
     event_type = data['type']
     logging.info(f"🔔 收到 webhook 请求: {data}") 
 
-    if event_type == 'checkout.session.completed':
+    if event_type in ['checkout.session.completed', 'customer.subscription.created', 'invoice.paid']:
         metadata = data['data']['object']['metadata']
         group_id = metadata.get('group_id')
-        line_id = metadata.get('line_id')  # 明确提取 line_id
+        line_id = metadata.get('line_id')  
         plan = metadata.get('plan', 'Unknown')
 
         quota_mapping = {
@@ -350,6 +350,7 @@ def stripe_webhook():
             logging.error(f"⚠️ Failed to send notification: {e}")
 
     return jsonify(success=True), 200
+
 
 
 
