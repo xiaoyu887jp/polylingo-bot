@@ -303,6 +303,7 @@ def callback():
 def stripe_webhook():
     data = request.json
     event_type = data['type']
+    logging.info(f"🔔 收到 webhook 请求: {data}") 
 
     if event_type == 'checkout.session.completed':
         metadata = data['data']['object']['metadata']
