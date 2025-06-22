@@ -323,7 +323,17 @@ def stripe_webhook():
         message = f"🎉 Subscription successful! Plan: {plan}, quota updated to: {quota_amount} characters. Thanks for subscribing!"
 
         try:
-            line_bot_api.push_message(group_id, TextSendMessage(text=message))
+            from linebot.v3.messaging import (
+                ApiClient, MessagingApi, Configuration, TextMessage
+             )
+            configuration = Configuration(access_token=LINE_ACCESS_TOKEN)
+            with ApiClient(configuration) as api_client:
+                line_bot_api = MessagingApi(api_client)
+                line_bot_api.push_message(
+                    group_id,
+                    TextMessage(text=message)
+                )
+
             print(f"✅ Notification sent successfully to group: {group_id}")
         except Exception as e:
             print(f"⚠️ Failed to send notification: {e}")
