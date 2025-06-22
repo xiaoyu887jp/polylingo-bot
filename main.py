@@ -308,6 +308,7 @@ def stripe_webhook():
     if event_type == 'checkout.session.completed':
         metadata = data['data']['object']['metadata']
         group_id = metadata.get('group_id')
+        line_id = metadata.get('line_id')  # 明确提取 line_id
         plan = metadata.get('plan', 'Unknown')
 
         quota_mapping = {
@@ -325,20 +326,31 @@ def stripe_webhook():
         try:
             from linebot.v3.messaging import (
                 ApiClient, MessagingApi, Configuration, TextMessage
-             )
+            )
             configuration = Configuration(access_token=LINE_ACCESS_TOKEN)
             with ApiClient(configuration) as api_client:
                 line_bot_api = MessagingApi(api_client)
-                line_bot_api.push_message(
-                    group_id,
-                    TextMessage(text=message)
-                )
 
-            print(f"✅ Notification sent successfully to group: {group_id}")
+                if line_id:  # 如果有个人用户line_id，就向个人推送
+                    line_bot_api.push_message(
+                        line_id,
+                        TextMessage(text=message)
+                    )
+                    logging.info(f"✅ Notification sent successfully to LINE user: {line_id}")
+                elif group_id:  # 否则，向群组推送
+                    line_bot_api.push_message(
+                        group_id,
+                        TextMessage(text=message)
+                    )
+                    logging.info(f"✅ Notification sent successfully to group: {group_id}")
+                else:
+                    logging.warning("⚠️ Missing both line_id and group_id in metadata. No message sent.")
+
         except Exception as e:
-            print(f"⚠️ Failed to send notification: {e}")
+            logging.error(f"⚠️ Failed to send notification: {e}")
 
     return jsonify(success=True), 200
+
 
 def update_group_quota_to_amount(group_id, quota_amount):
     conn = sqlite3.connect(DATABASE)
