@@ -240,7 +240,7 @@ def callback():
             if not check_user_quota(user_id, len(user_text)):
                 quota_message = (
                     f"⚠️ Your free quota has been exhausted. Subscribe here:\n"
-                    f"https://saygo-translator.carrd.co?line_id={user_id}"
+                    f"https://saygo-translator.carrd.co?line_id={user_id}&group_id={group_id}"
                 )  
                 reply_to_line(reply_token, [{"type": "text", "text": quota_message}])
                 continue
