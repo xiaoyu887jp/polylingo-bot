@@ -356,6 +356,7 @@ def stripe_webhook():
 
 
 
+
 def update_group_quota_to_amount(group_id, quota_amount):
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
