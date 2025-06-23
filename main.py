@@ -305,10 +305,10 @@ def stripe_webhook():
     event_type = data['type']
     logging.info(f"🔔 收到 webhook 请求: {data}") 
 
-    if event_type in ['checkout.session.completed', 'customer.subscription.created', 'invoice.paid']:
+    if event_type == 'checkout.session.completed':
         metadata = data['data']['object']['metadata']
         group_id = metadata.get('group_id')
-        line_id = metadata.get('line_id')  
+        line_id = metadata.get('line_id')  # 明确提取line_id
         plan = metadata.get('plan', 'Unknown')
 
         quota_mapping = {
@@ -319,6 +319,7 @@ def stripe_webhook():
         }
 
         quota_amount = quota_mapping.get(plan, 0)
+
         update_group_quota_to_amount(group_id, quota_amount)
 
         message = f"🎉 Subscription successful! Plan: {plan}, quota updated to: {quota_amount} characters. Thanks for subscribing!"
@@ -331,13 +332,13 @@ def stripe_webhook():
             with ApiClient(configuration) as api_client:
                 line_bot_api = MessagingApi(api_client)
 
-                if line_id:
+                if line_id:  # 优先向个人用户发送通知
                     line_bot_api.push_message(
                         line_id,
                         TextMessage(text=message)
                     )
                     logging.info(f"✅ Notification sent successfully to LINE user: {line_id}")
-                elif group_id:
+                elif group_id:  # 如果没有个人ID，向群组发送通知
                     line_bot_api.push_message(
                         group_id,
                         TextMessage(text=message)
@@ -350,6 +351,7 @@ def stripe_webhook():
             logging.error(f"⚠️ Failed to send notification: {e}")
 
     return jsonify(success=True), 200
+
 
 
 
