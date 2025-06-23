@@ -426,7 +426,14 @@ def update_user_quota(user_id, text_length):
     conn.commit()
     conn.close()
 
+def reset_group_settings():
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM group_settings')
+    conn.commit()
+    conn.close()
 
 if __name__ == "__main__":
+    reset_group_settings()  # ← 这一行是新加的
     port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
