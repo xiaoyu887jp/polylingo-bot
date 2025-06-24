@@ -396,11 +396,17 @@ def check_user_quota(user_id, text_length):
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
 
-    cursor.execute('SELECT quota, is_paid FROM user_quota WHERE user_id=?', (user_id,))
+    current_month = datetime.now().strftime("%Y-%m")
+    cursor.execute('SELECT quota, last_reset_month, is_paid FROM user_quota WHERE user_id=?', (user_id,))
     row = cursor.fetchone()
 
     if row:
-        current_quota, is_paid = row
+        current_quota, last_reset_month, is_paid = row
+        if last_reset_month != current_month:
+            current_quota = 5000 - text_length
+            cursor.execute('UPDATE user_quota SET quota=?, last_reset_month=? WHERE user_id=?',
+                           (current_quota, current_month, user_id))
+            conn.commit()
         if is_paid:
             conn.close()
             return True
@@ -409,10 +415,12 @@ def check_user_quota(user_id, text_length):
             conn.close()
             return result
     else:
-        cursor.execute('INSERT INTO user_quota (user_id, quota, is_paid) VALUES (?, 5000, 0)', (user_id,))
+        cursor.execute('INSERT INTO user_quota (user_id, quota, last_reset_month, is_paid) VALUES (?, ?, ?, 0)',
+                       (user_id, 5000 - text_length, current_month))
         conn.commit()
         conn.close()
-        return 5000 >= text_length
+        return (5000 - text_length) >= 0
+
 
 
 def update_user_quota(user_id, text_length):
