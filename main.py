@@ -391,27 +391,39 @@ def update_user_quota_by_email(email, quota_amount):
     
     return user_id
 
-def check_user_quota(user_id, text_length):
+def update_user_quota(user_id, text_length):
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
 
-    cursor.execute('SELECT quota, is_paid FROM user_quota WHERE user_id=?', (user_id,))
+    current_month = datetime.now().strftime("%Y-%m")
+
+    cursor.execute('SELECT quota, last_reset_month FROM user_quota WHERE user_id=?', (user_id,))
     row = cursor.fetchone()
 
     if row:
-        current_quota, is_paid = row
-        if is_paid:
-            conn.close()
-            return True
+        current_quota, last_reset_month = row
+
+        if last_reset_month != current_month:
+            # 新月份重置额度
+            current_quota = 5000 - text_length
+            cursor.execute('''
+                UPDATE user_quota SET quota=?, last_reset_month=?
+                WHERE user_id=?
+            ''', (current_quota, current_month, user_id))
         else:
-            result = current_quota >= text_length
-            conn.close()
-            return result
+            # 正常扣额度
+            cursor.execute('''
+                UPDATE user_quota SET quota=quota - ? 
+                WHERE user_id=? AND is_paid=0
+            ''', (text_length, user_id))
     else:
-        cursor.execute('INSERT INTO user_quota (user_id, quota, is_paid) VALUES (?, 5000, 0)', (user_id,))
-        conn.commit()
-        conn.close()
-        return 5000 >= text_length
+        cursor.execute('''
+            INSERT INTO user_quota (user_id, quota, is_paid, last_reset_month)
+            VALUES (?, ?, 0, ?)
+        ''', (user_id, 5000 - text_length, current_month))
+
+    conn.commit()
+    conn.close()
 
 
 def update_user_quota(user_id, text_length):
