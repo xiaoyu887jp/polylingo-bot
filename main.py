@@ -189,7 +189,13 @@ def callback():
         group_id = source.get("groupId", "private")
         user_id = source.get("userId", "unknown")
         key = f"{group_id}_{user_id}"
+        
+        line_bot_api.reply_message(
+            reply_token,
+            TextSendMessage(text=f"你的LINE用户ID: {user_id}\n群组ID: {group_id}")
+        )
 
+        
         profile_res = requests.get(
             f"https://api.line.me/v2/bot/profile/{user_id}",
             headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
