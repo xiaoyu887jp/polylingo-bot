@@ -190,10 +190,10 @@ def callback():
         user_id = source.get("userId", "unknown")
         key = f"{group_id}_{user_id}"
         
-        line_bot_api.reply_message(
-            reply_token,
-            TextSendMessage(text=f"你的LINE用户ID: {user_id}\n群组ID: {group_id}")
-        )
+        #line_bot_api.reply_message(
+           # reply_token,
+            #TextSendMessage(text=f"你的LINE用户ID: {user_id}\n群组ID: {group_id}")
+       # )
 
         
         profile_res = requests.get(
