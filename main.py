@@ -332,31 +332,27 @@ def stripe_webhook():
         message = f"🎉 Subscription successful! Plan: {plan}, quota updated to: {quota_amount} characters. Thanks for subscribing!"
 
         try:
-            from linebot.v3.messaging import (
-                ApiClient, MessagingApi, Configuration, PushMessageRequest, TextMessage
-            )
-            configuration = Configuration(access_token=LINE_ACCESS_TOKEN)
+            from linebot import LineBotApi
+            from linebot.models import TextSendMessage
 
-            with ApiClient(configuration) as api_client:
-                messaging_api = MessagingApi(api_client)
+            line_bot_api = LineBotApi(LINE_ACCESS_TOKEN)
 
-                if line_id:
-                    push_request = PushMessageRequest(
-                        to=line_id,
-                        messages=[TextMessage(text=message)]
-                    )
-                    messaging_api.push_message(push_request)
-                    logging.info(f"✅ Notification sent successfully to LINE user: {line_id}")
+            if line_id:
+                line_bot_api.push_message(
+                    line_id,
+                    TextSendMessage(text=message)
+                )
+                logging.info(f"✅ Notification sent successfully to LINE user: {line_id}")
 
-                elif group_id:
-                    push_request = PushMessageRequest(
-                        to=group_id,
-                        messages=[TextMessage(text=message)]
-                    )
-                    messaging_api.push_message(push_request)
-                    logging.info(f"✅ Notification sent successfully to group: {group_id}")
-                else:
-                    logging.warning("⚠️ Missing both line_id and group_id in metadata. No message sent.")
+            elif group_id:
+                line_bot_api.push_message(
+                    group_id,
+                    TextSendMessage(text=message)
+                )
+                logging.info(f"✅ Notification sent successfully to group: {group_id}")
+
+            else:
+                logging.warning("⚠️ Missing both line_id and group_id in metadata. No message sent.")
 
         except Exception as e:
             logging.error(f"⚠️ Failed to send notification: {e}")
