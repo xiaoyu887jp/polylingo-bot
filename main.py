@@ -327,23 +327,27 @@ def stripe_webhook():
 
         try:
             from linebot.v3.messaging import (
-                ApiClient, MessagingApi, Configuration, TextMessage
+                ApiClient, MessagingApi, Configuration, PushMessageRequest, TextMessage
             )
             configuration = Configuration(access_token=LINE_ACCESS_TOKEN)
-            with ApiClient(configuration) as api_client:
-                line_bot_api = MessagingApi(api_client)
 
-                if line_id:  # 优先向个人用户发送通知
-                    line_bot_api.push_message(
-                        line_id,
-                        TextMessage(text=message)
+            with ApiClient(configuration) as api_client:
+                messaging_api = MessagingApi(api_client)
+
+                if line_id:
+                    push_request = PushMessageRequest(
+                        to=line_id,
+                        messages=[TextMessage(text=message)]
                     )
+                    messaging_api.push_message(push_request)
                     logging.info(f"✅ Notification sent successfully to LINE user: {line_id}")
-                elif group_id:  # 如果没有个人ID，向群组发送通知
-                    line_bot_api.push_message(
-                        group_id,
-                        TextMessage(text=message)
+
+                elif group_id:
+                    push_request = PushMessageRequest(
+                        to=group_id,
+                        messages=[TextMessage(text=message)]
                     )
+                    messaging_api.push_message(push_request)
                     logging.info(f"✅ Notification sent successfully to group: {group_id}")
                 else:
                     logging.warning("⚠️ Missing both line_id and group_id in metadata. No message sent.")
