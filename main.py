@@ -310,12 +310,12 @@ def callback():
 def stripe_webhook():
     data = request.json
     event_type = data['type']
-    logging.info(f"🔔 收到 webhook 请求: {data}") 
+    logging.info(f"🔔 收到 webhook 请求: {data}")
 
     if event_type == 'checkout.session.completed':
         metadata = data['data']['object']['metadata']
         group_id = metadata.get('group_id')
-        line_id = metadata.get('line_id')  # 明确提取line_id
+        line_id = metadata.get('line_id')
         plan = metadata.get('plan', 'Unknown')
 
         quota_mapping = {
@@ -326,33 +326,38 @@ def stripe_webhook():
         }
 
         quota_amount = quota_mapping.get(plan, 0)
-
         update_group_quota_to_amount(group_id, quota_amount)
 
         message = f"🎉 Subscription successful! Plan: {plan}, quota updated to: {quota_amount} characters. Thanks for subscribing!"
 
         try:
-            from linebot import LineBotApi
-            from linebot.models import TextSendMessage
+            from linebot.v3.messaging import (
+                ApiClient, MessagingApi, Configuration, PushMessageRequest, TextMessage
+            )
 
-            line_bot_api = LineBotApi(LINE_ACCESS_TOKEN)
+            configuration = Configuration(access_token=LINE_ACCESS_TOKEN)
 
-            if line_id:
-                line_bot_api.push_message(
-                    line_id,
-                    TextSendMessage(text=message)
-                )
-                logging.info(f"✅ Notification sent successfully to LINE user: {line_id}")
+            with ApiClient(configuration) as api_client:
+                messaging_api = MessagingApi(api_client)
 
-            elif group_id:
-                line_bot_api.push_message(
-                    group_id,
-                    TextSendMessage(text=message)
-                )
-                logging.info(f"✅ Notification sent successfully to group: {group_id}")
+                if line_id:
+                    push_request = PushMessageRequest(
+                        to=line_id,
+                        messages=[TextMessage(text=message)]
+                    )
+                    messaging_api.push_message(push_request)
+                    logging.info(f"✅ Notification sent to LINE user: {line_id}")
 
-            else:
-                logging.warning("⚠️ Missing both line_id and group_id in metadata. No message sent.")
+                elif group_id:
+                    push_request = PushMessageRequest(
+                        to=group_id,
+                        messages=[TextMessage(text=message)]
+                    )
+                    messaging_api.push_message(push_request)
+                    logging.info(f"✅ Notification sent to group: {group_id}")
+
+                else:
+                    logging.warning("⚠️ Missing both line_id and group_id in metadata. No message sent.")
 
         except Exception as e:
             logging.error(f"⚠️ Failed to send notification: {e}")
