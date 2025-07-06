@@ -410,30 +410,36 @@ def check_user_quota(user_id, text_length):
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
 
-    current_month = datetime.now().strftime("%Y-%m")
-    cursor.execute('SELECT quota, last_reset_month, is_paid FROM user_quota WHERE user_id=?', (user_id,))
+    cursor.execute('SELECT quota, is_paid FROM user_quota WHERE user_id=?', (user_id,))
     row = cursor.fetchone()
 
     if row:
-        current_quota, last_reset_month, is_paid = row
-        if last_reset_month != current_month:
-            current_quota = 5000 - text_length
-            cursor.execute('UPDATE user_quota SET quota=?, last_reset_month=? WHERE user_id=?',
-                           (current_quota, current_month, user_id))
-            conn.commit()
+        current_quota, is_paid = row
+
         if is_paid:
             conn.close()
-            return True
+            return True  # 付费用户无限使用
         else:
-            result = current_quota >= text_length
-            conn.close()
-            return result
+            if current_quota <= 0:
+                conn.close()
+                return False  # 额度为0，永久禁止免费使用
+            elif current_quota >= text_length:
+                cursor.execute('UPDATE user_quota SET quota = quota - ? WHERE user_id=?', (text_length, user_id))
+                conn.commit()
+                conn.close()
+                return True
+            else:
+                conn.close()
+                return False  # 额度不足，无法使用
     else:
-        cursor.execute('INSERT INTO user_quota (user_id, quota, last_reset_month, is_paid) VALUES (?, ?, ?, 0)',
-                       (user_id, 5000 - text_length, current_month))
+        # 首次使用，初始化终身免费额度5000字
+        initial_quota = 5000 - text_length
+        cursor.execute('INSERT INTO user_quota (user_id, quota, is_paid) VALUES (?, ?, 0)',
+                       (user_id, initial_quota))
         conn.commit()
         conn.close()
-        return (5000 - text_length) >= 0
+        return initial_quota >= 0
+
 
 
 
