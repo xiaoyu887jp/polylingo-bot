@@ -461,6 +461,16 @@ def reset_group_settings():
     conn.commit()
     conn.close()
 
+# 新加入的函数（临时测试额度重置）✅
+def reset_all_user_quota():
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    cursor.execute('UPDATE user_quota SET quota = 100 WHERE is_paid=0')  # 临时把所有非付费用户额度改为100
+    conn.commit()
+    conn.close()
+
+reset_all_user_quota()  # ⚠️ 测试完毕后，立刻删除或注释掉这行
+
 if __name__ == "__main__":
     reset_group_settings()  # ← 这一行是新加的
     port = int(os.getenv("PORT", 10000))
