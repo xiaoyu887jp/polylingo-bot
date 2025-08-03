@@ -329,7 +329,24 @@ def stripe_webhook():
 
         quota_amount = quota_mapping.get(plan, 0)
         update_group_quota_to_amount(group_id, quota_amount)
+        group_count_mapping = {
+            'Starter': 1,
+            'Basic': 3,
+            'Pro': 5,
+            'Expert': 10
+        }
 
+        allowed_groups = group_count_mapping.get(plan, 1)
+
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO user_plan (user_id, allowed_group_count, current_group_ids)
+            VALUES (?, ?, ?)
+        ''', (line_id, allowed_groups, ''))
+
+        conn.commit()
+        conn.close()
         message = f"🎉 Subscription successful! Plan: {plan}, quota updated to: {quota_amount} characters. Thanks for subscribing!"
 
         try:
