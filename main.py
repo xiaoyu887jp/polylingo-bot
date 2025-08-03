@@ -191,13 +191,7 @@ def callback():
         group_id = source.get("groupId", "private")
         user_id = source.get("userId", "unknown")
         key = f"{group_id}_{user_id}"
-        
-        #line_bot_api.reply_message(
-           # reply_token,
-            #TextSendMessage(text=f"你的LINE用户ID: {user_id}\n群组ID: {group_id}")
-       # )
 
-        
         profile_res = requests.get(
             f"https://api.line.me/v2/bot/profile/{user_id}",
             headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
@@ -213,11 +207,46 @@ def callback():
 
         if event["type"] == "join":
             group_id = source.get("groupId")
-            if group_id and not has_sent_card(group_id):
-                send_language_selection_card(reply_token)
-                mark_card_sent(group_id)
-                continue
-              
+            inviter_id = source.get("userId")  # 邀请人 LINE ID（付款人）
+
+            conn = sqlite3.connect(DATABASE)
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT allowed_group_count, current_group_ids FROM user_plan WHERE user_id=?", (inviter_id,))
+            result = cursor.fetchone()
+
+            if result:
+                allowed_group_count, current_group_ids = result
+                current_groups = current_group_ids.split(",") if current_group_ids else []
+
+                if len(current_groups) < allowed_group_count:
+                    if group_id not in current_groups:
+                        current_groups.append(group_id)
+                        updated_groups = ','.join(current_groups)
+                        cursor.execute("UPDATE user_plan SET current_group_ids=? WHERE user_id=?", (updated_groups, inviter_id))
+
+                        initial_quota = 300000  # 根据需求调整
+                        cursor.execute('INSERT OR REPLACE INTO group_quota (group_id, quota) VALUES (?, ?)', (group_id, initial_quota))
+
+                        send_language_selection_card(reply_token)
+                        mark_card_sent(group_id)
+                    else:
+                        send_language_selection_card(reply_token)
+                        mark_card_sent(group_id)
+                else:
+                    line_bot_api.reply_message(reply_token, TextSendMessage(
+                        text="⚠️ 您的套餐允许的群组数量已满，请升级套餐后再添加更多群组。"
+                    ))
+                    line_bot_api.leave_group(group_id)
+            else:
+                line_bot_api.reply_message(reply_token, TextSendMessage(
+                    text="⚠️ 您尚未订阅套餐，请先订阅后再邀请机器人。"
+                ))
+                line_bot_api.leave_group(group_id)
+
+            conn.commit()
+            conn.close()
+            continue
 
         if event["type"] == "leave":
             group_id = source.get("groupId")
@@ -228,7 +257,6 @@ def callback():
                 conn.commit()
                 conn.close()
             continue
-    
 
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"].strip()
@@ -245,14 +273,14 @@ def callback():
                 send_language_selection_card(reply_token)
                 continue
 
-
             if not check_user_quota(user_id, len(user_text)):
                 quota_message = (
                     f"⚠️ Your free quota has been exhausted. Subscribe here:\n"
                     f"https://saygo-translator.carrd.co?line_id={user_id}&group_id={group_id}"
-                )  
+                )
                 reply_to_line(reply_token, [{"type": "text", "text": quota_message}])
                 continue
+
             
         
 
