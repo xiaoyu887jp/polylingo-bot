@@ -477,7 +477,7 @@ def check_user_quota(user_id, text_length):
                 return False  # 额度不足，无法使用
     else:
         # 首次使用，初始化终身免费额度5000字
-        initial_quota = 5000 - text_length
+        initial_quota = 100 - text_length
         cursor.execute('INSERT INTO user_quota (user_id, quota, is_paid) VALUES (?, ?, 0)',
                        (user_id, initial_quota))
         conn.commit()
