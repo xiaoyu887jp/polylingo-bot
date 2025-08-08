@@ -178,7 +178,6 @@ def update_group_quota(group_id, text_length):
 
     return new_quota
 
-
 @app.route("/callback", methods=["POST"])
 def callback():
     events = request.get_json().get("events", [])
@@ -243,61 +242,63 @@ def callback():
                     user_language_settings[key] = []
                 if user_text not in user_language_settings[key]:
                     user_language_settings[key].append(user_text)
-                langs = ', '.join(user_language_settings[key])
-                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {langs}"}])
+                langs_text = ', '.join(user_language_settings[key])
+                reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {langs_text}"}])
                 continue
 
             # 3) 还没选语言 → 发卡片并退出（此时不做配额检查）
-            langs = user_language_settings.get(key, [])
-            if not langs:
+            selected_langs = user_language_settings.get(key, [])
+            if not selected_langs:
                 if not has_sent_card(group_id):  # 确认该群组是否已发送过卡片
                     send_language_selection_card(reply_token)
                     mark_card_sent(group_id)
                 continue
 
-            # 4) 现在再做配额检查（把原来提前的 Block A 移到这里）
-            if not check_user_quota(user_id, len(user_text)):
-                quota_message = (
-                    "⚠️ Your free quota has been exhausted. Subscribe here:\n"
-                    f"https://saygo-translator.carrd.co?line_id={user_id}&group_id={group_id}"
-                )
-                reply_to_line(reply_token, [{"type": "text", "text": quota_message}])
-                continue
-
-            # 5) 扣群配额 & 翻译（保持你原逻辑）
+            # 4) 配额检查（分免费/付费）
+            is_paid = get_user_paid_flag(user_id)
+            text_len = len(user_text)
             messages = []
-            new_quota = update_group_quota(group_id, len(user_text))
 
-            if new_quota <= 0:
-                quota_message = (
-                    f"⚠️ Your free quota is exhausted. Please subscribe here:\n"
-                    f"https://saygo-translator.carrd.co?line_id={user_id}\n\n"
-                    f"⚠️ 您的免费额度已用完，请点击这里订阅：\n"
-                    f"https://saygo-translator.carrd.co?line_id={user_id}"
-                )
-                messages.append({"type": "text", "text": quota_message})
+            if not is_paid:
+                # 【免费期】只看并扣个人额度（一次性5000字）
+                if not check_user_quota(user_id, text_len):
+                    link = sub_link(user_id, group_id)
+                    reply_to_line(
+                        reply_token,
+                        [{"type": "text", "text": f"⚠️ 免费额度已用完，请订阅：\n{link}"}]
+                    )
+                    continue
             else:
-                for lang in langs:
-                    translated_text = translate(user_text, lang)
-                    if user_avatar != "https://example.com/default_avatar.png":
-                        sender_icon = user_avatar
-                    else:
-                        sender_icon = "https://i.imgur.com/sTqykvy.png"
-                    messages.append({
-                        "type": "text",
-                        "text": translated_text,
-                        "sender": {
-                            "name": f"Saygo ({lang})",
-                            "iconUrl": sender_icon
-                        }
-                    })
-                update_usage(group_id, user_id, len(user_text))
+                # 【付费期】只扣群池
+                new_quota = update_group_quota(group_id, text_len)
+                if new_quota <= 0:
+                    link = sub_link(user_id, group_id)
+                    reply_to_line(
+                        reply_token,
+                        [{"type": "text", "text": f"⚠️ 本群套餐额度已用完，请升级或续费：\n{link}"}]
+                    )
+                    continue
+
+            # 5) 通过配额后再翻译并回发（两种状态都走同一条回发路径）
+            for lang in selected_langs:
+                translated_text = translate(user_text, lang)
+                sender_icon = (
+                    user_avatar
+                    if user_avatar != "https://example.com/default_avatar.png"
+                    else "https://i.imgur.com/sTqykvy.png"
+                )
+                messages.append({
+                    "type": "text",
+                    "text": translated_text,
+                    "sender": {"name": f"Saygo ({lang})", "iconUrl": sender_icon}
+                })
+
+            # 记录统计（保留你原来的使用量记录逻辑）
+            update_usage(group_id, user_id, text_len)
 
             reply_to_line(reply_token, messages)
 
     return jsonify(success=True), 200
-
-
 
 @app.route('/stripe-webhook', methods=['POST'])
 def stripe_webhook():
