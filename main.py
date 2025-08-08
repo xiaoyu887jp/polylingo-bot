@@ -205,15 +205,13 @@ def callback():
             user_name = "User"
             user_avatar = "https://example.com/default_avatar.png"
 
-        # ✅ 修复后的 join 分支
+        # ✅ 修复后的 join 分支（保留）
         if event["type"] == "join":
             group_id = source.get("groupId")
             # 入群时不做订阅/额度校验，也不退群 —— 只发语言选择卡
             send_language_selection_card(reply_token)
             mark_card_sent(group_id)
             continue
-
- 
 
         if event["type"] == "leave":
             group_id = source.get("groupId")
@@ -228,29 +226,18 @@ def callback():
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"].strip()
 
+            # 1) 重置语言
             if user_text in ["/reset", "/re", "/resetlang"]:
                 user_language_settings[key] = []
-
                 conn = sqlite3.connect(DATABASE)
                 cursor = conn.cursor()
                 cursor.execute('DELETE FROM group_settings WHERE group_id=?', (group_id,))
                 conn.commit()
                 conn.close()
-
                 send_language_selection_card(reply_token)
                 continue
 
-            if not check_user_quota(user_id, len(user_text)):
-                quota_message = (
-                    f"⚠️ Your free quota has been exhausted. Subscribe here:\n"
-                    f"https://saygo-translator.carrd.co?line_id={user_id}&group_id={group_id}"
-                )
-                reply_to_line(reply_token, [{"type": "text", "text": quota_message}])
-                continue
-
-            
-        
-
+            # 2) 语言按钮（允许用户先选语言）
             if user_text in LANGUAGES:
                 if key not in user_language_settings:
                     user_language_settings[key] = []
@@ -260,6 +247,7 @@ def callback():
                 reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {langs}"}])
                 continue
 
+            # 3) 还没选语言 → 发卡片并退出（此时不做配额检查）
             langs = user_language_settings.get(key, [])
             if not langs:
                 if not has_sent_card(group_id):  # 确认该群组是否已发送过卡片
@@ -267,9 +255,18 @@ def callback():
                     mark_card_sent(group_id)
                 continue
 
+            # 4) 现在再做配额检查（把原来提前的 Block A 移到这里）
+            if not check_user_quota(user_id, len(user_text)):
+                quota_message = (
+                    "⚠️ Your free quota has been exhausted. Subscribe here:\n"
+                    f"https://saygo-translator.carrd.co?line_id={user_id}&group_id={group_id}"
+                )
+                reply_to_line(reply_token, [{"type": "text", "text": quota_message}])
+                continue
+
+            # 5) 扣群配额 & 翻译（保持你原逻辑）
             messages = []
             new_quota = update_group_quota(group_id, len(user_text))
-
 
             if new_quota <= 0:
                 quota_message = (
@@ -282,12 +279,10 @@ def callback():
             else:
                 for lang in langs:
                     translated_text = translate(user_text, lang)
-
                     if user_avatar != "https://example.com/default_avatar.png":
                         sender_icon = user_avatar
                     else:
                         sender_icon = "https://i.imgur.com/sTqykvy.png"
-
                     messages.append({
                         "type": "text",
                         "text": translated_text,
@@ -301,6 +296,7 @@ def callback():
             reply_to_line(reply_token, messages)
 
     return jsonify(success=True), 200
+
 
 
 @app.route('/stripe-webhook', methods=['POST'])
