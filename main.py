@@ -205,48 +205,15 @@ def callback():
             user_name = "User"
             user_avatar = "https://example.com/default_avatar.png"
 
+        # ✅ 修复后的 join 分支
         if event["type"] == "join":
             group_id = source.get("groupId")
-            inviter_id = source.get("userId")  # 邀请人 LINE ID（付款人）
-
-            conn = sqlite3.connect(DATABASE)
-            cursor = conn.cursor()
-
-            cursor.execute("SELECT allowed_group_count, current_group_ids FROM user_plan WHERE user_id=?", (inviter_id,))
-            result = cursor.fetchone()
-
-            if result:
-                allowed_group_count, current_group_ids = result
-                current_groups = current_group_ids.split(",") if current_group_ids else []
-
-                if len(current_groups) < allowed_group_count:
-                    if group_id not in current_groups:
-                        current_groups.append(group_id)
-                        updated_groups = ','.join(current_groups)
-                        cursor.execute("UPDATE user_plan SET current_group_ids=? WHERE user_id=?", (updated_groups, inviter_id))
-
-                        initial_quota = 300000  # 根据需求调整
-                        cursor.execute('INSERT OR REPLACE INTO group_quota (group_id, quota) VALUES (?, ?)', (group_id, initial_quota))
-
-                        send_language_selection_card(reply_token)
-                        mark_card_sent(group_id)
-                    else:
-                        send_language_selection_card(reply_token)
-                        mark_card_sent(group_id)
-                else:
-                    line_bot_api.reply_message(reply_token, TextSendMessage(
-                        text="⚠️ 您的套餐允许的群组数量已满，请升级套餐后再添加更多群组。"
-                    ))
-                    line_bot_api.leave_group(group_id)
-            else:
-                line_bot_api.reply_message(reply_token, TextSendMessage(
-                    text="⚠️ 您尚未订阅套餐，请先订阅后再邀请机器人。"
-                ))
-                line_bot_api.leave_group(group_id)
-
-            conn.commit()
-            conn.close()
+            # 入群时不做订阅/额度校验，也不退群 —— 只发语言选择卡
+            send_language_selection_card(reply_token)
+            mark_card_sent(group_id)
             continue
+
+ 
 
         if event["type"] == "leave":
             group_id = source.get("groupId")
