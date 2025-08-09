@@ -73,7 +73,18 @@ def get_current_usage(group_id, user_id):
     conn.close()
     return row[0] if row else 0
 
-
+def get_user_paid_flag(user_id: str) -> bool:
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT is_paid FROM user_quota WHERE user_id=?', (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return bool(row and row[0] == 1)
+    
+def sub_link(user_id: str, group_id: str) -> str:
+    # 你的购买页；把用户和群ID带上便于回调识别
+    base = "https://saygo-translator.carrd.co"
+    return f"{base}?line_id={user_id}&group_id={group_id}"
 
 
 import os
