@@ -478,9 +478,7 @@ def reset_all_user_quota():
     conn.commit()
     conn.close()
 
-reset_all_user_quota()  # ⚠️ 测试完毕后，立刻删除或注释掉这行
 
-if __name__ == "__main__":
-    reset_group_settings()  # ← 这一行是新加的
+if __name__ == "__main__": reset_group_settings()  # ← 这一行是新加的
     port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
