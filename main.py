@@ -313,28 +313,52 @@ def callback():
 
 @app.route('/stripe-webhook', methods=['POST'])
 def stripe_webhook():
-    data = request.json
-    event_type = data['type']
+    data = request.get_json(silent=True) or {}
+    event_type = data.get('type')
     logging.info(f"🔔 收到 webhook 请求: {data}")
 
     if event_type == 'checkout.session.completed':
-        metadata = data['data']['object']['metadata']
+        obj = (data.get('data') or {}).get('object') or {}
+        metadata = obj.get('metadata') or {}
         group_id = metadata.get('group_id')
         line_id = metadata.get('line_id')
         plan = metadata.get('plan', 'Unknown')
 
-    if event_type == 'checkout.session.completed':
-        # ... 省略若干行 ...
+        # 1) 计算套餐额度与可绑定群数
+        quota_mapping = {
+            'Starter': 300000,
+            'Basic':   1000000,
+            'Pro':     2000000,
+            'Expert':  4000000
+        }
+        group_count_mapping = {
+            'Starter': 1,
+            'Basic':   3,
+            'Pro':     5,
+            'Expert': 10
+        }
+        quota_amount   = quota_mapping.get(plan, 0)
+        allowed_groups = group_count_mapping.get(plan, 1)
+
+        # 2) 若带了 group_id，则初始化该群的群池额度
+        if group_id:
+            update_group_quota_to_amount(group_id, quota_amount)
+
+        # 3) 写入/更新 user_plan （把当前群先记录进去，JSON 存储）
+        import json
+        current_ids = [group_id] if group_id else []
+        current_group_ids = json.dumps(current_ids)
+
         conn = sqlite3.connect(DATABASE)
         cursor = conn.cursor()
         cursor.execute('''
             INSERT OR REPLACE INTO user_plan (user_id, allowed_group_count, current_group_ids)
             VALUES (?, ?, ?)
-        ''', (line_id, allowed_group_count, current_group_ids))
+        ''', (line_id, allowed_groups, current_group_ids))
         conn.commit()
         conn.close()
 
-         # 标记该 LINE 用户为已付费（若不存在则插入，存在则更新）
+        # 4) 标记该 LINE 用户为已付费（若不存在则插入，存在则更新）
         conn = sqlite3.connect(DATABASE)
         cursor = conn.cursor()
         cursor.execute('''
@@ -345,69 +369,19 @@ def stripe_webhook():
         conn.commit()
         conn.close()
 
-        quota_mapping = {
-            'Starter': 300000,
-            'Basic': 1000000,
-            'Pro': 2000000,
-            'Expert': 4000000
-        }
-
-        quota_amount = quota_mapping.get(plan, 0)
-        update_group_quota_to_amount(group_id, quota_amount)
-        group_count_mapping = {
-            'Starter': 1,
-            'Basic': 3,
-            'Pro': 5,
-            'Expert': 10
-        }
-
-        allowed_groups = group_count_mapping.get(plan, 1)
-
-        conn = sqlite3.connect(DATABASE)
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR REPLACE INTO user_plan (user_id, allowed_group_count, current_group_ids)
-            VALUES (?, ?, ?)
-        ''', (line_id, allowed_groups, ''))
-
-        conn.commit()
-        conn.close()
-        message = f"🎉 Subscription successful! Plan: {plan}, quota updated to: {quota_amount} characters. Thanks for subscribing!"
-
+        # 5) 推送通知（沿用你现有的 SDK）
+        message = f"🎉 Subscription successful! Plan: {plan}, quota set: {quota_amount} characters. Thanks for subscribing!"
         try:
-            from linebot.v3.messaging import (
-                ApiClient, MessagingApi, Configuration, PushMessageRequest, TextMessage
-            )
-
-            configuration = Configuration(access_token=LINE_ACCESS_TOKEN)
-
-            with ApiClient(configuration) as api_client:
-                messaging_api = MessagingApi(api_client)
-
-                if line_id:
-                    push_request = PushMessageRequest(
-                        to=line_id,
-                        messages=[TextMessage(text=message)]
-                    )
-                    messaging_api.push_message(push_request)
-                    logging.info(f"✅ Notification sent to LINE user: {line_id}")
-
-                elif group_id:
-                    push_request = PushMessageRequest(
-                        to=group_id,
-                        messages=[TextMessage(text=message)]
-                    )
-                    messaging_api.push_message(push_request)
-                    logging.info(f"✅ Notification sent to group: {group_id}")
-
-                else:
-                    logging.warning("⚠️ Missing both line_id and group_id in metadata. No message sent.")
-
+            to_id = line_id or group_id
+            if to_id:
+                line_bot_api.push_message(to_id, TextSendMessage(text=message))
+                logging.info(f"✅ Notification pushed to {to_id}")
+            else:
+                logging.warning("⚠️ Missing both line_id and group_id in metadata. No message sent.")
         except Exception as e:
             logging.error(f"⚠️ Failed to send notification: {e}")
 
     return jsonify(success=True), 200
-
 
 
 
