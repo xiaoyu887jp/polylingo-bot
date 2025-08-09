@@ -323,6 +323,28 @@ def stripe_webhook():
         line_id = metadata.get('line_id')
         plan = metadata.get('plan', 'Unknown')
 
+    if event_type == 'checkout.session.completed':
+        # ... 省略若干行 ...
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO user_plan (user_id, allowed_group_count, current_group_ids)
+            VALUES (?, ?, ?)
+        ''', (line_id, allowed_group_count, current_group_ids))
+        conn.commit()
+        conn.close()
+
+         # 标记该 LINE 用户为已付费（若不存在则插入，存在则更新）
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO user_quota (user_id, quota, is_paid)
+            VALUES (?, 0, 1)
+            ON CONFLICT(user_id) DO UPDATE SET is_paid=1
+        ''', (line_id,))
+        conn.commit()
+        conn.close()
+
         quota_mapping = {
             'Starter': 300000,
             'Basic': 1000000,
