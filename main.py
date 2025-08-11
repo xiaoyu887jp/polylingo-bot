@@ -173,21 +173,20 @@ def translate(text, target_language):
 def update_group_quota(group_id, text_length):
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
-
     cursor.execute('SELECT quota FROM group_quota WHERE group_id=?', (group_id,))
     row = cursor.fetchone()
 
-    if row:
-        new_quota = max(row[0] - text_length, 0)
-        cursor.execute('UPDATE group_quota SET quota=? WHERE group_id=?', (new_quota, group_id))
-    else:
-        new_quota = max(5000 - text_length, 0)
-        cursor.execute('INSERT INTO group_quota (group_id, quota) VALUES (?, ?)', (group_id, new_quota))
+    # 群未激活（没有套餐池）→ 返回 -1，让上层提示去绑定/购买
+    if not row:
+        conn.close()
+        return -1
 
+    new_quota = max(row[0] - text_length, 0)
+    cursor.execute('UPDATE group_quota SET quota=? WHERE group_id=?', (new_quota, group_id))
     conn.commit()
     conn.close()
-
     return new_quota
+
 
 @app.route("/callback", methods=["POST"])
 def callback():
@@ -384,9 +383,6 @@ def stripe_webhook():
     return jsonify(success=True), 200
 
 
-
-
-
 def update_group_quota_to_amount(group_id, quota_amount):
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
@@ -394,7 +390,13 @@ def update_group_quota_to_amount(group_id, quota_amount):
     conn.commit()
     conn.close()
 
-
+def get_group_quota_amount(group_id):
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT quota FROM group_quota WHERE group_id=?', (group_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return (row[0] if row else None)
 
 
 # 新增的辅助函数（更新额度用）
