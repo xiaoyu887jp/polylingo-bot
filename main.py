@@ -524,23 +524,46 @@ def stripe_webhook():
         quota_amount   = quota_mapping.get(plan, 0)
         allowed_groups = group_count_mapping.get(plan, 1)
 
-        # 若带了 group_id，则初始化该群的群池额度
+        # 1) 若带了 group_id，则初始化该群的群池额度
         if group_id:
             update_group_quota_to_amount(group_id, quota_amount)
 
-        # 写入/更新 user_plan
+        # 2) 写入/更新 user_plan（合并旧的 current_group_ids，避免覆盖）
         current_ids = [group_id] if group_id else []
-        current_group_ids = json.dumps(current_ids)
+
         conn = sqlite3.connect(DATABASE)
         cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR REPLACE INTO user_plan (user_id, allowed_group_count, current_group_ids)
-            VALUES (?, ?, ?)
-        ''', (line_id, allowed_groups, current_group_ids))
+
+        # 读取旧的 current_group_ids
+        cursor.execute('SELECT current_group_ids FROM user_plan WHERE user_id=?', (line_id,))
+        row = cursor.fetchone()
+        old_ids = []
+        if row and row[0]:
+            try:
+                old_ids = json.loads(row[0])
+            except Exception:
+                old_ids = []
+
+        # 合并 + 去重（保持顺序）
+        merged = list(dict.fromkeys([*old_ids, *current_ids]))
+        merged_json = json.dumps(merged)
+
+        # 有则更新，无则插入
+        if row:
+            cursor.execute(
+                'UPDATE user_plan SET allowed_group_count=?, current_group_ids=? WHERE user_id=?',
+                (allowed_groups, merged_json, line_id)
+            )
+        else:
+            cursor.execute(
+                'INSERT INTO user_plan (user_id, allowed_group_count, current_group_ids) VALUES (?, ?, ?)',
+                (line_id, allowed_groups, merged_json)
+            )
+
         conn.commit()
         conn.close()
 
-        # 标记该 LINE 用户为已付费
+        # 3) 标记该 LINE 用户为已付费
         conn = sqlite3.connect(DATABASE)
         cursor = conn.cursor()
         cursor.execute('''
@@ -551,7 +574,7 @@ def stripe_webhook():
         conn.commit()
         conn.close()
 
-        # 推送通知
+        # 4) 推送通知
         message = f"🎉 Subscription successful! Plan: {plan}, quota set: {quota_amount} characters. Thanks for subscribing!"
         try:
             to_id = line_id or group_id
@@ -564,6 +587,7 @@ def stripe_webhook():
             logging.error(f"⚠️ Failed to send notification: {e}")
 
     return jsonify(success=True), 200
+
 
 # ---------------------- 入口 ----------------------
 if __name__ == "__main__":
