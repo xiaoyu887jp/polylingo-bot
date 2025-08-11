@@ -264,22 +264,43 @@ def callback():
                     mark_card_sent(group_id)
                 continue
 
-            # 4) 配额检查（分免费/付费）
-            is_paid = get_user_paid_flag(user_id)
+            # 4) 配额检查（先看群是否已激活）
             text_len = len(user_text)
             messages = []
 
-            if not is_paid:
-                # 【免费期】只看并扣个人额度（一次性5000字）
-                if not check_user_quota(user_id, text_len):
+            grp_quota = get_group_quota_amount(group_id)
+
+            if grp_quota is None:
+                # 群未激活
+                if get_user_paid_flag(user_id):
+                    # 付费用户在未激活群：不允许无限用 → 提示去绑定/购买
                     link = sub_link(user_id, group_id)
                     reply_to_line(
                         reply_token,
-                        [{"type": "text", "text": f"⚠️ 免费额度已用完，请订阅：\n{link}"}]
+                        [{"type": "text", "text": f"⚠️ 本群尚未激活到你的套餐，请先在购买页绑定本群：\n{link}"}]
                     )
                     continue
+                else:
+                    # 非付费用户 → 走个人 5000 免费额度
+                    if not check_user_quota(user_id, text_len):
+                        link = sub_link(user_id, group_id)
+                        reply_to_line(
+                            reply_token,
+                            [{"type": "text", "text": f"⚠️ 免费额度已用完，请订阅：\n{link}"}]
+                        )
+                        continue
             else:
-                # 【付费期】只扣群池
+                # 群已激活
+                if grp_quota <= 0:
+                    # 已激活但额度用尽
+                    link = sub_link(user_id, group_id)
+                    reply_to_line(
+                        reply_token,
+                        [{"type": "text", "text": f"⚠️ 本群套餐额度已用完，请升级或续费：\n{link}"}]
+                    )
+                    continue
+
+                # 额度 > 0 → 扣群池
                 new_quota = update_group_quota(group_id, text_len)
                 if new_quota <= 0:
                     link = sub_link(user_id, group_id)
@@ -289,7 +310,7 @@ def callback():
                     )
                     continue
 
-            # 5) 通过配额后再翻译并回发（两种状态都走同一条回发路径）
+            # 5) 通过配额后再翻译并回发
             for lang in selected_langs:
                 translated_text = translate(user_text, lang)
                 sender_icon = (
@@ -303,12 +324,13 @@ def callback():
                     "sender": {"name": f"Saygo ({lang})", "iconUrl": sender_icon}
                 })
 
-            # 记录统计（保留你原来的使用量记录逻辑）
+            # 记录统计
             update_usage(group_id, user_id, text_len)
 
             reply_to_line(reply_token, messages)
 
     return jsonify(success=True), 200
+
 
 @app.route('/stripe-webhook', methods=['POST'])
 def stripe_webhook():
