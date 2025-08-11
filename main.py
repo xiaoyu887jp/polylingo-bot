@@ -446,7 +446,7 @@ def get_group_quota_amount(group_id):
     conn.close()
     return (row[0] if row else None)
 
-  def _plan_quota_by_allowed(allowed_groups: int) -> int:
+def _plan_quota_by_allowed(allowed_groups: int) -> int:
     # 与 webhook 的套餐额度映射保持一致（按你实际方案可调整）
     mapping = {1: 300000, 3: 1000000, 5: 2000000, 10: 4000000}
     return mapping.get(allowed_groups, 0)
