@@ -12,6 +12,7 @@ logging.basicConfig(level=logging.INFO)
 # 初始化 Flask 应用（放在最前面）
 app = Flask(__name__)
 DATABASE = '/var/data/data.db'
+STRICT_GROUP_MODE = True  # 严格群模式：群未激活时群聊一律不翻译，统一引导购买/绑定
 
 # ✅ 检查群组是否已发送过语言卡片
 def has_sent_card(group_id):
@@ -214,14 +215,14 @@ def callback():
             user_name = "User"
             user_avatar = "https://example.com/default_avatar.png"
 
-        # ✅ 修复后的 join 分支（保留）
+        # 入群：只发语言卡
         if event["type"] == "join":
             group_id = source.get("groupId")
-            # 入群时不做订阅/额度校验，也不退群 —— 只发语言选择卡
             send_language_selection_card(reply_token)
             mark_card_sent(group_id)
             continue
 
+        # 退群：清理群状态
         if event["type"] == "leave":
             group_id = source.get("groupId")
             if group_id:
@@ -232,6 +233,7 @@ def callback():
                 conn.close()
             continue
 
+        # 文本消息
         if event["type"] == "message" and event["message"]["type"] == "text":
             user_text = event["message"]["text"].strip()
 
@@ -246,7 +248,7 @@ def callback():
                 send_language_selection_card(reply_token)
                 continue
 
-            # 2) 语言按钮（允许用户先选语言）
+            # 2) 选择语言
             if user_text in LANGUAGES:
                 if key not in user_language_settings:
                     user_language_settings[key] = []
@@ -256,61 +258,86 @@ def callback():
                 reply_to_line(reply_token, [{"type": "text", "text": f"✅ Your languages: {langs_text}"}])
                 continue
 
-            # 3) 还没选语言 → 发卡片并退出（此时不做配额检查）
+            # 3) 未选语言 → 先发卡
             selected_langs = user_language_settings.get(key, [])
             if not selected_langs:
-                if not has_sent_card(group_id):  # 确认该群组是否已发送过卡片
+                if not has_sent_card(group_id):
                     send_language_selection_card(reply_token)
                     mark_card_sent(group_id)
                 continue
 
-            # 4) 配额检查（先看群是否已激活）
+            # 4) 配额检查（严格群模式 + 已激活/未激活/用尽三类）
             text_len = len(user_text)
             messages = []
 
             grp_quota = get_group_quota_amount(group_id)
 
             if grp_quota is None:
-                # 群未激活
-                if get_user_paid_flag(user_id):
-                    # 付费用户在未激活群：不允许无限用 → 提示去绑定/购买
-                    link = sub_link(user_id, group_id)
-                    reply_to_line(
-                        reply_token,
-                        [{"type": "text", "text": f"⚠️ 本群尚未激活到你的套餐，请先在购买页绑定本群：\n{link}"}]
-                    )
-                    continue
-                else:
-                    # 非付费用户 → 走个人 5000 免费额度
-                    if not check_user_quota(user_id, text_len):
+                # 未激活
+                if STRICT_GROUP_MODE and group_id != "private":
+                    if get_user_paid_flag(user_id):
+                        # 尝试自动绑定
+                        bound, allowed, used_after = _bind_group_if_allowed(user_id, group_id)
                         link = sub_link(user_id, group_id)
-                        reply_to_line(
-                            reply_token,
-                            [{"type": "text", "text": f"⚠️ 免费额度已用完，请订阅：\n{link}"}]
-                        )
+                        if not bound:
+                            reply_to_line(reply_token, [{
+                                "type": "text",
+                                "text": f"⚠️ 你的套餐名额已满（{used_after}/{allowed} 个群）。请升级套餐：\n{link}"
+                            }])
+                            continue
+                        # 绑定成功 → 立即扣群池
+                        new_quota = update_group_quota(group_id, text_len)
+                        if new_quota <= 0:
+                            reply_to_line(reply_token, [{
+                                "type": "text",
+                                "text": f"⚠️ 本群套餐额度已用完，请升级或续费：\n{link}"
+                            }])
+                            continue
+                    else:
+                        # 非付费用户 → 直接引导购买/绑定
+                        link = sub_link(user_id, group_id)
+                        reply_to_line(reply_token, [{
+                            "type": "text",
+                            "text": f"⚠️ 本群未购买/未绑定套餐，暂不可用。请联系管理员购买/绑定：\n{link}"
+                        }])
                         continue
+                else:
+                    # 非严格模式或私聊 → 允许用个人5000
+                    if get_user_paid_flag(user_id):
+                        link = sub_link(user_id, group_id)
+                        reply_to_line(reply_token, [{
+                            "type": "text",
+                            "text": f"⚠️ 本群尚未激活到你的套餐，请先绑定/购买：\n{link}"
+                        }])
+                        continue
+                    else:
+                        if not check_user_quota(user_id, text_len):
+                            link = sub_link(user_id, group_id)
+                            reply_to_line(reply_token, [{
+                                "type": "text",
+                                "text": f"⚠️ 免费额度已用完，请订阅：\n{link}"
+                            }])
+                            continue
             else:
-                # 群已激活
+                # 已激活
                 if grp_quota <= 0:
-                    # 已激活但额度用尽
                     link = sub_link(user_id, group_id)
-                    reply_to_line(
-                        reply_token,
-                        [{"type": "text", "text": f"⚠️ 本群套餐额度已用完，请升级或续费：\n{link}"}]
-                    )
+                    reply_to_line(reply_token, [{
+                        "type": "text",
+                        "text": f"⚠️ 本群套餐额度已用完，请升级或续费：\n{link}"
+                    }])
                     continue
 
-                # 额度 > 0 → 扣群池
                 new_quota = update_group_quota(group_id, text_len)
                 if new_quota <= 0:
                     link = sub_link(user_id, group_id)
-                    reply_to_line(
-                        reply_token,
-                        [{"type": "text", "text": f"⚠️ 本群套餐额度已用完，请升级或续费：\n{link}"}]
-                    )
+                    reply_to_line(reply_token, [{
+                        "type": "text",
+                        "text": f"⚠️ 本群套餐额度已用完，请升级或续费：\n{link}"
+                    }])
                     continue
 
-            # 5) 通过配额后再翻译并回发
+            # 5) 翻译并回发
             for lang in selected_langs:
                 translated_text = translate(user_text, lang)
                 sender_icon = (
@@ -324,12 +351,11 @@ def callback():
                     "sender": {"name": f"Saygo ({lang})", "iconUrl": sender_icon}
                 })
 
-            # 记录统计
             update_usage(group_id, user_id, text_len)
-
             reply_to_line(reply_token, messages)
 
     return jsonify(success=True), 200
+
 
 
 @app.route('/stripe-webhook', methods=['POST'])
@@ -419,6 +445,107 @@ def get_group_quota_amount(group_id):
     row = cursor.fetchone()
     conn.close()
     return (row[0] if row else None)
+    
+def _plan_quota_by_allowed(allowed_groups: int) -> int:
+    # 与 webhook 的套餐额度映射保持一致（按你实际方案微调）
+    mapping = {1: 300000, 3: 1000000, 5: 2000000, 10: 4000000}
+    return mapping.get(allowed_groups, 0)
+
+def _get_user_plan_info(user_id: str):
+    import json
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT allowed_group_count, current_group_ids FROM user_plan WHERE user_id=?', (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return 0, []
+    allowed, ids = (row[0] or 0), (row[1] or '[]')
+    try:
+        groups = json.loads(ids) if ids else []
+    except Exception:
+        groups = []
+    return allowed, groups
+
+def _bind_group_if_allowed(user_id: str, group_id: str):
+    """
+    自动绑定：若用户还有名额，则把当前群加入套餐，并为该群初始化群池。
+    返回 (bound: bool, allowed: int, used_after: int)
+    """
+    import json
+    allowed, groups = _get_user_plan_info(user_id)
+    used = len(groups)
+    if allowed <= 0 or used >= allowed:
+        return (False, allowed, used)
+
+    if group_id in groups:
+        per_quota = _plan_quota_by_allowed(allowed)
+        if per_quota > 0:
+            update_group_quota_to_amount(group_id, per_quota)
+        return (True, allowed, used)
+
+    groups.append(group_id)
+    per_quota = _plan_quota_by_allowed(allowed)
+
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    cursor.execute('UPDATE user_plan SET current_group_ids=? WHERE user_id=?', (json.dumps(groups), user_id))
+    conn.commit()
+    conn.close()
+
+    if per_quota > 0:
+        update_group_quota_to_amount(group_id, per_quota)
+
+    return (True, allowed, used + 1)
+
+if grp_quota is None:
+    # 严格群模式：群聊里未激活一律不翻译（避免“蹭用”）
+    if STRICT_GROUP_MODE and group_id != "private":
+        if get_user_paid_flag(user_id):
+            # 付费用户：尝试自动绑定（若还有名额）
+            bound, allowed, used_after = _bind_group_if_allowed(user_id, group_id)
+            link = sub_link(user_id, group_id)
+            if not bound:
+                reply_to_line(reply_token, [{
+                    "type": "text",
+                    "text": f"⚠️ 你的套餐名额已满（{used_after}/{allowed} 个群）。请升级套餐：\n{link}"
+                }])
+                continue
+
+            # 绑定成功 → 立即按群池扣
+            new_quota = update_group_quota(group_id, text_len)
+            if new_quota <= 0:
+                reply_to_line(reply_token, [{
+                    "type": "text",
+                    "text": f"⚠️ 本群套餐额度已用完，请升级或续费：\n{link}"
+                }])
+                continue
+        else:
+            # 非付费用户：直接引导购买/绑定
+            link = sub_link(user_id, group_id)
+            reply_to_line(reply_token, [{
+                "type": "text",
+                "text": f"⚠️ 本群未购买/未绑定套餐，暂不可用。请联系管理员购买/绑定：\n{link}"
+            }])
+            continue
+    else:
+        # 非严格模式（或私聊）保留个人 5000 试用
+        if get_user_paid_flag(user_id):
+            link = sub_link(user_id, group_id)
+            reply_to_line(reply_token, [{
+                "type": "text",
+                "text": f"⚠️ 本群尚未激活到你的套餐，请先绑定/购买：\n{link}"
+            }])
+            continue
+        else:
+            if not check_user_quota(user_id, text_len):
+                link = sub_link(user_id, group_id)
+                reply_to_line(reply_token, [{
+                    "type": "text",
+                    "text": f"⚠️ 免费额度已用完，请订阅：\n{link}"
+                }])
+                continue
+
 
 
 # 新增的辅助函数（更新额度用）
@@ -478,9 +605,6 @@ def check_user_quota(user_id, text_length):
         conn.commit()
         conn.close()
         return initial_quota >= 0
-
-
-
 
 def update_user_quota(user_id, text_length):
     conn = sqlite3.connect(DATABASE)
