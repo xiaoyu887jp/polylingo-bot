@@ -445,7 +445,59 @@ def get_group_quota_amount(group_id):
     row = cursor.fetchone()
     conn.close()
     return (row[0] if row else None)
-    
+
+  def _plan_quota_by_allowed(allowed_groups: int) -> int:
+    # 与 webhook 的套餐额度映射保持一致（按你实际方案可调整）
+    mapping = {1: 300000, 3: 1000000, 5: 2000000, 10: 4000000}
+    return mapping.get(allowed_groups, 0)
+
+def _get_user_plan_info(user_id: str):
+    import json
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT allowed_group_count, current_group_ids FROM user_plan WHERE user_id=?', (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return 0, []
+    allowed, ids = (row[0] or 0), (row[1] or '[]')
+    try:
+        groups = json.loads(ids) if ids else []
+    except Exception:
+        groups = []
+    return allowed, groups
+
+def _bind_group_if_allowed(user_id: str, group_id: str):
+    """
+    自动绑定：若用户还有名额，则把当前群加入套餐，并为该群初始化群池。
+    返回 (bound: bool, allowed: int, used_after: int)
+    """
+    import json
+    allowed, groups = _get_user_plan_info(user_id)
+    used = len(groups)
+    if allowed <= 0 or used >= allowed:
+        return (False, allowed, used)
+
+    if group_id in groups:
+        per_quota = _plan_quota_by_allowed(allowed)
+        if per_quota > 0:
+            update_group_quota_to_amount(group_id, per_quota)
+        return (True, allowed, used)
+
+    groups.append(group_id)
+    per_quota = _plan_quota_by_allowed(allowed)
+
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    cursor.execute('UPDATE user_plan SET current_group_ids=? WHERE user_id=?', (json.dumps(groups), user_id))
+    conn.commit()
+    conn.close()
+
+    if per_quota > 0:
+        update_group_quota_to_amount(group_id, per_quota)
+
+    return (True, allowed, used + 1)
+  
 def _plan_quota_by_allowed(allowed_groups: int) -> int:
     # 与 webhook 的套餐额度映射保持一致（按你实际方案微调）
     mapping = {1: 300000, 3: 1000000, 5: 2000000, 10: 4000000}
