@@ -54,37 +54,43 @@ flex_message_json = {
         "type": "box",
         "layout": "vertical",
         "contents": [
-            {"type": "text",
-             "text": "🌍 Please select translation language",
-             "weight": "bold", "size": "lg", "align": "center"}
+            {
+                "type": "text",
+                "text": "🌍 Please select translation language",
+                "weight": "bold",
+                "size": "lg",
+                "align": "center",
+                "color": "#E5E7EB"
+            }
         ],
-        "backgroundColor": "#FFCC80"
+        "backgroundColor": "#0B0F14"
     },
     "body": {
         "type": "box",
         "layout": "vertical",
         "spacing": "sm",
         "contents": [
-            {"type":"button","style":"primary","color":"#2E7D32","action":{"type":"message","label":"🇺🇸 English","text":"en"}},
-            {"type":"button","style":"primary","color":"#2E7D32","action":{"type":"message","label":"🇨🇳 简体中文","text":"zh-cn"}},
-            {"type":"button","style":"primary","color":"#1976D2","action":{"type":"message","label":"🇹🇼 繁體中文","text":"zh-tw"}},
-            {"type":"button","style":"primary","color":"#D32F2F","action":{"type":"message","label":"🇯🇵 日本語","text":"ja"}},
-            {"type":"button","style":"primary","color":"#7B1FA2","action":{"type":"message","label":"🇰🇷 한국어","text":"ko"}},
-            {"type":"button","style":"primary","color":"#F57C00","action":{"type":"message","label":"🇹🇭 ภาษาไทย","text":"th"}},
-            {"type":"button","style":"primary","color":"#F57C00","action":{"type":"message","label":"🇻🇳 Tiếng Việt","text":"vi"}},
-            {"type":"button","style":"primary","color":"#0097A7","action":{"type":"message","label":"🇫🇷 Français","text":"fr"}},
-            {"type":"button","style":"primary","color":"#2E7D32","action":{"type":"message","label":"🇪🇸 Español","text":"es"}},
-            {"type":"button","style":"primary","color":"#1976D2","action":{"type":"message","label":"🇩🇪 Deutsch","text":"de"}},
-            {"type":"button","style":"primary","color":"#2E7D32","action":{"type":"message","label":"🇮🇩 Bahasa Indonesia","text":"id"}},
-            {"type":"button","style":"primary","color":"#D32F2F","action":{"type":"message","label":"🇮🇳 हिन्दी","text":"hi"}},
-            {"type":"button","style":"primary","color":"#2E7D32","action":{"type":"message","label":"🇮🇹 Italiano","text":"it"}},
-            {"type":"button","style":"primary","color":"#F57C00","action":{"type":"message","label":"🇵🇹 Português","text":"pt"}},
-            {"type":"button","style":"primary","color":"#7B1FA2","action":{"type":"message","label":"🇷🇺 Русский","text":"ru"}},
-            {"type":"button","style":"primary","color":"#D32F2F","action":{"type":"message","label":"🇸🇦 العربية","text":"ar"}},
-            {"type":"button","style":"secondary","action":{"type":"message","label":"🔄 Reset","text":"/resetlang"}}
+            {"type":"button","style":"primary","color":"#1F6FEB","action":{"type":"message","label":"🇺🇸 English","text":"en"}},
+            {"type":"button","style":"primary","color":"#1F6FEB","action":{"type":"message","label":"🇨🇳 简体中文","text":"zh-cn"}},
+            {"type":"button","style":"primary","color":"#1F6FEB","action":{"type":"message","label":"🇹🇼 繁體中文","text":"zh-tw"}},
+            {"type":"button","style":"primary","color":"#1F6FEB","action":{"type":"message","label":"🇯🇵 日本語","text":"ja"}},
+            {"type":"button","style":"primary","color":"#1F6FEB","action":{"type":"message","label":"🇰🇷 한국어","text":"ko"}},
+            {"type":"button","style":"primary","color":"#1F6FEB","action":{"type":"message","label":"🇹🇭 ภาษาไทย","text":"th"}},
+            {"type":"button","style":"primary","color":"#1F6FEB","action":{"type":"message","label":"🇻🇳 Tiếng Việt","text":"vi"}},
+            {"type":"button","style":"primary","color":"#1F6FEB","action":{"type":"message","label":"🇫🇷 Français","text":"fr"}},
+            {"type":"button","style":"primary","color":"#1F6FEB","action":{"type":"message","label":"🇪🇸 Español","text":"es"}},
+            {"type":"button","style":"primary","color":"#1F6FEB","action":{"type":"message","label":"🇩🇪 Deutsch","text":"de"}},
+            {"type":"button","style":"primary","color":"#1F6FEB","action":{"type":"message","label":"🇮🇩 Bahasa Indonesia","text":"id"}},
+            {"type":"button","style":"primary","color":"#1F6FEB","action":{"type":"message","label":"🇮🇳 हिन्दी","text":"hi"}},
+            {"type":"button","style":"primary","color":"#1F6FEB","action":{"type":"message","label":"🇮🇹 Italiano","text":"it"}},
+            {"type":"button","style":"primary","color":"#1F6FEB","action":{"type":"message","label":"🇵🇹 Português","text":"pt"}},
+            {"type":"button","style":"primary","color":"#1F6FEB","action":{"type":"message","label":"🇷🇺 Русский","text":"ru"}},
+            {"type":"button","style":"primary","color":"#1F6FEB","action":{"type":"message","label":"🇸🇦 العربية","text":"ar"}},
+            {"type":"button","style":"secondary","color":"#9AA4B2","action":{"type":"message","label":"🔄 Reset","text":"/resetlang"}}
         ]
     }
 }
+
 
 # ---------------------- 小工具函数 ----------------------
 def reply_to_line(reply_token, messages):
