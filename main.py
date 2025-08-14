@@ -287,23 +287,7 @@ def atomic_deduct_user_free_quota(user_id: str, amount: int) -> (bool, int):
 app = Flask(__name__)
 
 # ---------------- LINE Webhook ----------------
-@app.route("/callback", methods=["POST"])
-def line_webhook():
-    # 校验 LINE 签名
-    signature = request.headers.get("X-Line-Signature", "")
-    body = request.get_data(as_text=True)
-    if LINE_CHANNEL_SECRET:
-        digest = hmac.new(LINE_CHANNEL_SECRET.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).digest()
-        valid_signature = base64.b64encode(digest).decode("utf-8")
-        if signature != valid_signature:
-            abort(400)
-if etype == "message" and (event.get("message", {}).get("type") == "text"):
-    text = event["message"]["text"] or ""
 
-    # A) 重置指令：清空本群语言偏好并发卡
-    if is_reset_command(text):
-        cur.execute("DELETE FROM user_prefs WHERE group_id=?", (group_id,))
-        conn.commit()
         flex = build_language_selection_flex()
         alt_text = "[Translator Bot] Please select a language / 請選擇語言"
         send_reply_message(reply_token, [{"type": "flex", "altText": alt_text, "contents": flex}])
