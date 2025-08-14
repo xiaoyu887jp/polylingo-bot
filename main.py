@@ -1,680 +1,454 @@
 # -*- coding: utf-8 -*-
-# 覆盖原文件可用
-
 import os
 import json
-import html
-import logging
+import time
 import sqlite3
+import hmac
+import hashlib
+import base64
 import requests
-from datetime import datetime, timedelta
+from flask import Flask, request, abort
 
-from flask import Flask, request, jsonify
-from linebot import LineBotApi
-from linebot.models import FlexSendMessage, TextSendMessage
+# ===================== 配置 =====================
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "<LINE_CHANNEL_ACCESS_TOKEN>")
+LINE_CHANNEL_SECRET       = os.getenv("LINE_CHANNEL_SECRET", "<LINE_CHANNEL_SECRET>")
+STRIPE_WEBHOOK_SECRET     = os.getenv("STRIPE_WEBHOOK_SECRET", "<STRIPE_WEBHOOK_SECRET>")
 
-logging.basicConfig(level=logging.INFO)
+BOT_AVATAR_FALLBACK = "https://i.imgur.com/sTqykvy.png"
 
-# ---------------------- 基础配置 ----------------------
-app = Flask(__name__)
-DATABASE = '/var/data/data.db'
+# 计划与额度
+PLANS = {
+    'Free':    {'quota': 5000,    'max_groups': 0},
+    'Starter': {'quota': 50000,   'max_groups': 1},
+    'Basic':   {'quota': 200000,  'max_groups': 3},
+    'Pro':     {'quota': 500000,  'max_groups': 5},
+    'Expert':  {'quota': 1000000, 'max_groups': 10}
+}
 
-LINE_ACCESS_TOKEN = os.getenv("LINE_ACCESS_TOKEN")
-GOOGLE_API_KEY   = os.getenv("GOOGLE_API_KEY")
-line_bot_api     = LineBotApi(LINE_ACCESS_TOKEN)
+# 支持的重置指令（首个 token 命中即可）
+RESET_ALIASES = {"/re", "/reset", "/resetlang"}
 
-# 支持语言 & 重置指令
-LANGUAGES = ["en", "ja", "zh-tw", "zh-cn", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar", "ko"]
-LANG_RESET_ALIASES = {"/re", "/reset", "/resetlang"}
+# 语言名映射
+LANG_NAME_MAP = {
+    'en': 'English', 'zh-CN': 'Chinese (Simplified)', 'zh-TW': 'Chinese (Traditional)',
+    'ja': 'Japanese', 'ko': 'Korean', 'th': 'Thai', 'vi': 'Vietnamese',
+    'id': 'Indonesian', 'es': 'Spanish', 'fr': 'French'
+}
+def language_name(code): return LANG_NAME_MAP.get(code, code)
 
-# 运行期缓存（可选，重启不保留）
-user_language_settings = {}  # key = f"{group_id}_{user_id}" -> ["en", "ja", ...]
+# ===================== DB 初始化 =====================
+# autocommit 模式 + 并发友好设置
+conn = sqlite3.connect('bot.db', check_same_thread=False, isolation_level=None)
+conn.execute("PRAGMA journal_mode=WAL;")
+conn.execute("PRAGMA busy_timeout=5000;")
+cur = conn.cursor()
 
-# ---------------------- Schema 初始化 ----------------------
-def ensure_schema():
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
+cur.execute("""CREATE TABLE IF NOT EXISTS users (
+    user_id TEXT PRIMARY KEY,
+    free_remaining INTEGER
+)""")
+cur.execute("""CREATE TABLE IF NOT EXISTS user_prefs (
+    user_id TEXT,
+    group_id TEXT,
+    target_lang TEXT,
+    PRIMARY KEY(user_id, group_id)
+)""")
+cur.execute("""CREATE TABLE IF NOT EXISTS groups (
+    group_id TEXT PRIMARY KEY,
+    plan_type TEXT,
+    plan_owner TEXT,
+    plan_remaining INTEGER
+)""")
+cur.execute("""CREATE TABLE IF NOT EXISTS user_plans (
+    user_id TEXT PRIMARY KEY,
+    plan_type TEXT,
+    max_groups INTEGER,
+    subscription_id TEXT
+)""")
+cur.execute("""CREATE TABLE IF NOT EXISTS translations_cache (
+    text TEXT,
+    source_lang TEXT,
+    target_lang TEXT,
+    translated TEXT,
+    PRIMARY KEY(text, source_lang, target_lang)
+)""")
+conn.commit()
 
-    # 群设置：是否发过卡、卡片版本号
-    c.execute("""
-      CREATE TABLE IF NOT EXISTS group_settings(
-        group_id     TEXT PRIMARY KEY,
-        card_sent    INTEGER DEFAULT 0,
-        card_version INTEGER DEFAULT 1
-      )
-    """)
+# 内存缓存（可选）
+translation_cache = {}  # (text, sl, tl) -> translated
 
-    # 群配额（套餐）
-    c.execute("""
-      CREATE TABLE IF NOT EXISTS group_quota(
-        group_id      TEXT PRIMARY KEY,
-        quota         INTEGER DEFAULT 0,
-        owner_user_id TEXT,
-        activated_at  TEXT
-      )
-    """)
-
-    # 用户个人配额（终身免费5000 + 付费标记）
-    c.execute("""
-      CREATE TABLE IF NOT EXISTS user_quota(
-        user_id TEXT PRIMARY KEY,
-        quota   INTEGER DEFAULT 0,
-        is_paid INTEGER DEFAULT 0
-      )
-    """)
-
-    # 每人每群每月使用统计
-    c.execute("""
-      CREATE TABLE IF NOT EXISTS usage_records(
-        group_id TEXT,
-        user_id  TEXT,
-        month    TEXT,
-        usage    INTEGER,
-        PRIMARY KEY(group_id, user_id, month)
-      )
-    """)
-
-    # 语言偏好（按版本号存）
-    c.execute("""
-      CREATE TABLE IF NOT EXISTS language_prefs(
-        group_id   TEXT NOT NULL,
-        user_id    TEXT NOT NULL,
-        version    INTEGER NOT NULL,
-        langs      TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY(group_id, user_id, version)
-      )
-    """)
-
-    # 好友关系缓存（24h）
-    c.execute("""
-      CREATE TABLE IF NOT EXISTS friendship_cache(
-        user_id    TEXT PRIMARY KEY,
-        is_friend  INTEGER NOT NULL,
-        checked_at TEXT NOT NULL
-      )
-    """)
-
-    # 购买者套餐：允许绑定的群数量 + 已绑定的群列表
-    c.execute("""
-      CREATE TABLE IF NOT EXISTS user_plan(
-        user_id             TEXT PRIMARY KEY,
-        allowed_group_count INTEGER NOT NULL,
-        current_group_ids   TEXT NOT NULL DEFAULT '[]'  -- JSON 数组
-      )
-    """)
-
-    conn.commit()
-    conn.close()
-
-ensure_schema()
-
-# ---------------------- 工具函数 ----------------------
-def reply_to_line(reply_token, messages):
-    headers = {"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
-    requests.post(
-        "https://api.line.me/v2/bot/message/reply",
-        headers=headers,
-        json={"replyToken": reply_token, "messages": messages}
-    )
-
-def has_sent_card(group_id):
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-    c.execute('SELECT card_sent FROM group_settings WHERE group_id=?', (group_id,))
-    row = c.fetchone()
-    conn.close()
-    return bool(row and row[0] == 1)
-
-def mark_card_sent(group_id):
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-    c.execute('SELECT card_version FROM group_settings WHERE group_id=?', (group_id,))
-    row = c.fetchone()
-    if row is None:
-        c.execute('INSERT INTO group_settings(group_id, card_sent, card_version) VALUES (?, 1, 1)', (group_id,))
-    else:
-        c.execute('UPDATE group_settings SET card_sent=1 WHERE group_id=?', (group_id,))
-    conn.commit()
-    conn.close()
-
-def get_card_version(group_id) -> int:
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-    c.execute('SELECT card_version FROM group_settings WHERE group_id=?', (group_id,))
-    row = c.fetchone()
-    if row is None:
-        c.execute('INSERT INTO group_settings(group_id, card_sent, card_version) VALUES (?, 0, 1)', (group_id,))
-        conn.commit()
-        version = 1
-    else:
-        version = int(row[0] or 1)
-    conn.close()
-    return version
-
-def bump_card_version(group_id) -> int:
-    """版本+1并清空该群语言设定；允许再次发卡。"""
-    current = get_card_version(group_id)
-    new_v = current + 1
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-    c.execute('UPDATE group_settings SET card_version=?, card_sent=0 WHERE group_id=?', (new_v, group_id))
-    c.execute('DELETE FROM language_prefs WHERE group_id=?', (group_id,))
-    conn.commit()
-    conn.close()
-    # 清理内存态
-    for k in [k for k in user_language_settings.keys() if k.startswith(f"{group_id}_")]:
-        user_language_settings.pop(k, None)
-    return new_v
-
-def set_user_langs_db(group_id, user_id, version, langs):
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-    c.execute('''
-        INSERT OR REPLACE INTO language_prefs (group_id, user_id, version, langs, updated_at)
-        VALUES (?, ?, ?, ?, datetime('now'))
-    ''', (group_id, user_id, version, json.dumps(langs)))
-    conn.commit()
-    conn.close()
-
-def get_user_langs_db(group_id, user_id, version):
-    try:
-        conn = sqlite3.connect(DATABASE)
-        c = conn.cursor()
-        c.execute('SELECT langs FROM language_prefs WHERE group_id=? AND user_id=? AND version=?',
-                  (group_id, user_id, version))
-        row = c.fetchone()
-        conn.close()
-        if row:
-            return json.loads(row[0])
-    except Exception:
-        pass
-    return None
-
-def parse_lang_payload(text):
-    """解析按钮文本：/lang en v7  -> 返回 (code, 7)；不匹配返回 None"""
-    t = (text or "").strip()
-    if not t.lower().startswith("/lang "):
-        return None
+# ===================== 工具函数 =====================
+def first_token(s: str) -> str:
+    if not s: return ""
+    t = s.strip().lower().replace('\u3000', ' ')
     parts = t.split()
-    if len(parts) < 3:
-        return None
-    code = parts[1].lower()
-    ver  = parts[2].lower()
-    if not ver.startswith('v'):
-        return None
-    try:
-        vnum = int(ver[1:])
-    except Exception:
-        return None
-    return (code, vnum)
+    return parts[0] if parts else ""
 
-def update_usage(group_id, user_id, text_length):
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-    current_month = datetime.now().strftime("%Y-%m")
-    c.execute('SELECT usage FROM usage_records WHERE group_id=? AND user_id=? AND month=?',
-              (group_id, user_id, current_month))
-    row = c.fetchone()
-    if row:
-        new_usage = (row[0] or 0) + text_length
-        c.execute('UPDATE usage_records SET usage=? WHERE group_id=? AND user_id=? AND month=?',
-                  (new_usage, group_id, user_id, current_month))
-    else:
-        c.execute('INSERT INTO usage_records (group_id, user_id, month, usage) VALUES (?, ?, ?, ?)',
-                  (group_id, user_id, current_month, text_length))
-    conn.commit()
-    conn.close()
+def is_reset_command(s: str) -> bool:
+    return first_token(s) in RESET_ALIASES
 
-def check_user_quota(user_id, text_length) -> bool:
-    """个人终身免费 5000；付费用户 is_paid=1 则个人通道不限量（群扣费仍走群池）。"""
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-    c.execute('SELECT quota, is_paid FROM user_quota WHERE user_id=?', (user_id,))
-    row = c.fetchone()
-    if row:
-        current_quota, is_paid = row
-        if is_paid:
-            conn.close()
-            return True
-        if current_quota is None or current_quota <= 0:
-            conn.close()
-            return False
-        if current_quota >= text_length:
-            c.execute('UPDATE user_quota SET quota = quota - ? WHERE user_id=?', (text_length, user_id))
-            conn.commit()
-            conn.close()
-            return True
-        conn.close()
-        return False
-    else:
-        initial_quota = 5000 - text_length
-        c.execute('INSERT INTO user_quota (user_id, quota, is_paid) VALUES (?, ?, 0)', (user_id, initial_quota))
-        conn.commit()
-        conn.close()
-        return initial_quota >= 0
+def send_reply_message(reply_token, messages):
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"}
+    body = {"replyToken": reply_token, "messages": messages}
+    requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, data=json.dumps(body))
 
-def is_group_activated(group_id: str) -> bool:
-    """是否已激活：只看是否存在 group_quota 记录，与剩余额度无关。"""
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-    c.execute('SELECT 1 FROM group_quota WHERE group_id=?', (group_id,))
-    ok = c.fetchone() is not None
-    conn.close()
-    return ok
-
-def consume_group_quota(group_id: str, amount: int):
-    """原子扣减群套餐。成功返回 (True, remaining)，失败返回 (False, remaining_or_None)。"""
-    conn = sqlite3.connect(DATABASE, timeout=30.0, isolation_level=None)
-    c = conn.cursor()
-    try:
-        c.execute('BEGIN IMMEDIATE')
-        c.execute('SELECT quota FROM group_quota WHERE group_id=?', (group_id,))
-        row = c.fetchone()
-        if not row:
-            conn.rollback(); conn.close()
-            return (False, None)  # 未激活
-        current = int(row[0] or 0)
-        if current < amount:
-            conn.rollback(); conn.close()
-            return (False, current)  # 额度不足
-        c.execute('UPDATE group_quota SET quota = quota - ? WHERE group_id=?', (amount, group_id))
-        conn.commit()
-        remaining = current - amount
-        conn.close()
-        return (True, remaining)
-    except Exception:
-        try: conn.rollback()
-        except: pass
-        conn.close()
-        logging.exception("consume_group_quota failed")
-        return (False, None)
-
-def activate_group_quota(group_id: str, owner_user_id: str, quota_amount: int):
-    """Webhook 激活/重置群池额度（覆盖式）。"""
-    conn = sqlite3.connect(DATABASE)
-    c = conn.cursor()
-    c.execute('''
-        INSERT INTO group_quota (group_id, quota, owner_user_id, activated_at)
-        VALUES (?, ?, ?, datetime('now'))
-        ON CONFLICT(group_id) DO UPDATE SET
-          quota=excluded.quota,
-          owner_user_id=excluded.owner_user_id,
-          activated_at=excluded.activated_at
-    ''', (group_id, quota_amount, owner_user_id))
-    conn.commit()
-    conn.close()
-
-def translate(text, target_language):
-    url = f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}"
-    resp = requests.post(url, json={"q": text, "target": target_language})
-    if resp.status_code == 200:
-        resp.encoding = 'utf-8'
-        data = resp.json()
-        translated_text = data["data"]["translations"][0]["translatedText"]
-        return html.unescape(translated_text)
-    return "Translation error."
+def send_push_text(to_id: str, text: str):
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"}
+    body = {"to": to_id, "messages": [{"type": "text", "text": text}]}
+    requests.post("https://api.line.me/v2/bot/message/push", headers=headers, data=json.dumps(body))
 
 def is_friend(user_id: str) -> bool:
-    """查询好友关系（缓存 24h）；失败时按非好友处理。"""
-    try:
-        conn = sqlite3.connect(DATABASE)
-        c = conn.cursor()
-        c.execute('SELECT is_friend, checked_at FROM friendship_cache WHERE user_id=?', (user_id,))
-        row = c.fetchone()
-        now = datetime.utcnow()
-        if row:
-            isf, checked = row
-            try:
-                last = datetime.fromisoformat(checked)
-            except Exception:
-                last = now - timedelta(days=2)
-            if now - last < timedelta(hours=24):
-                conn.close()
-                return bool(isf)
+    headers = {"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"}
+    r = requests.get(f"https://api.line.me/v2/bot/friendship/status?userId={user_id}", headers=headers, timeout=5)
+    if r.status_code == 200:
+        return bool(r.json().get("friendFlag"))
+    return False
 
-        r = requests.get(
-            f"https://api.line.me/v2/bot/friendship/status?userId={user_id}",
-            headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}, timeout=5
-        )
-        ok = False
-        if r.status_code == 200:
-            ok = bool(r.json().get("friendFlag"))
-        c.execute('REPLACE INTO friendship_cache(user_id, is_friend, checked_at) VALUES (?, ?, ?)',
-                  (user_id, 1 if ok else 0, now.isoformat()))
-        conn.commit(); conn.close()
-        return ok
+def get_user_profile(user_id, group_id=None):
+    """群内优先用 group member API；非好友时依然可获取，但头像是否展示由 is_friend 决定。"""
+    headers = {"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"}
+    if group_id:
+        url = f"https://api.line.me/v2/bot/group/{group_id}/member/{user_id}"
+    else:
+        url = f"https://api.line.me/v2/bot/profile/{user_id}"
+    r = requests.get(url, headers=headers, timeout=5)
+    if r.status_code == 200:
+        return r.json()
+    return {}
+
+def build_language_selection_flex():
+    """语言选择 Flex（postback：lang=<code>）"""
+    languages = [
+        ("English", "en"), ("中文(简体)", "zh-CN"),
+        ("中文(繁體)", "zh-TW"), ("日本語", "ja"),
+        ("한국어", "ko"), ("ไทย", "th"),
+        ("Tiếng Việt", "vi"), ("Indonesia", "id"),
+        ("Español", "es"), ("Français", "fr")
+    ]
+    colors = ["#55ACEE", "#FF9933", "#FF5E5E", "#7CBDFF", "#FFD55E",
+              "#99CC66", "#66CCCC", "#CC6699", "#FF66FF", "#66FF66"]
+    rows = []
+    for i in range(0, len(languages), 2):
+        row = {"type": "box", "layout": "horizontal", "contents": []}
+        if i > 0: row["margin"] = "md"
+        for j in range(2):
+            if i + j >= len(languages): break
+            name, code = languages[i + j]
+            button = {
+                "type": "button",
+                "action": {"type": "postback", "label": name, "data": f"lang={code}"},
+                "style": "primary", "color": colors[i + j], "margin": "sm"
+            }
+            row["contents"].append(button)
+        rows.append(row)
+    footer_note = {"type": "text", "text": "Language Selection", "wrap": True,
+                   "color": "#888888", "size": "xs", "align": "center"}
+    return {"type": "bubble",
+            "body": {"type": "box", "layout": "vertical", "contents": rows},
+            "footer": {"type": "box", "layout": "vertical", "contents": [footer_note]}}
+
+def build_translation_flex(user_name, avatar_url, original_text, translations):
+    """翻译展示 Flex：头像+原文+多语言结果"""
+    contents = []
+    header_contents = []
+    if avatar_url:
+        header_contents.append({"type": "image", "url": avatar_url, "size": "xs",
+                                "aspectMode": "cover", "aspectRatio": "1:1", "flex": 0})
+    header_contents.append({"type": "text", "text": f"{user_name}:", "weight": "bold", "wrap": True, "margin": "sm"})
+    contents.append({"type": "box", "layout": "horizontal", "contents": header_contents})
+    contents.append({"type": "text", "text": original_text, "wrap": True, "color": "#555555", "margin": "xs"})
+    for lang, txt in translations:
+        contents.append({"type": "separator", "margin": "md"})
+        contents.append({"type": "text", "text": f"{lang}: {txt}", "wrap": True, "margin": "xs"})
+    return {"type": "bubble", "body": {"type": "box", "layout": "vertical", "contents": contents}}
+
+def translate_text(text, target_lang, source_lang=None):
+    """使用 gtx 非官方端点（无 Key）。若要稳定生产，建议换官方 Translate v2/v3。"""
+    cache_key = (text, source_lang or 'auto', target_lang)
+    if cache_key in translation_cache:
+        return translation_cache[cache_key], (source_lang or 'auto')
+    sl = source_lang if source_lang else 'auto'
+    url = ("https://translate.googleapis.com/translate_a/single?client=gtx&dt=t"
+           f"&sl={sl}&tl={target_lang}&q=" + requests.utils.requote_uri(text))
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
     except Exception:
-        try: conn.close()
-        except: pass
+        return None
+    segs = [seg[0] for seg in data[0] if seg[0]]
+    translated_text = "".join(segs)
+    detected_source = source_lang or (data[2] if len(data) > 2 else '')
+    translation_cache[cache_key] = translated_text
+    try:
+        cur.execute("INSERT OR IGNORE INTO translations_cache (text, source_lang, target_lang, translated) VALUES (?, ?, ?, ?)",
+                    (text, detected_source, target_lang, translated_text))
+        conn.commit()
+    except Exception:
+        pass
+    return translated_text, detected_source
+
+# ---------------- 原子扣减：群池 ----------------
+def atomic_deduct_group_quota(group_id: str, amount: int) -> bool:
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        cur.execute("SELECT plan_remaining FROM groups WHERE group_id=?", (group_id,))
+        row = cur.fetchone()
+        if not row or (row[0] is None) or (row[0] < amount):
+            conn.execute("ROLLBACK")
+            return False
+        cur.execute("UPDATE groups SET plan_remaining = plan_remaining - ? WHERE group_id=?", (amount, group_id))
+        conn.commit()
+        return True
+    except sqlite3.OperationalError:
+        conn.execute("ROLLBACK")
         return False
 
-def sub_link(user_id: str, group_id: str) -> str:
-    return f"https://saygo-translator.carrd.co?line_id={user_id}&group_id={group_id}"
+# ---------------- 原子扣减：个人 5000 ----------------
+def atomic_deduct_user_free_quota(user_id: str, amount: int) -> (bool, int):
+    """返回 (成功/失败, 扣减后剩余或当前余额)"""
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        cur.execute("SELECT free_remaining FROM users WHERE user_id=?", (user_id,))
+        row = cur.fetchone()
+        if not row:
+            free_total = PLANS['Free']['quota']
+            if amount > free_total:
+                conn.execute("ROLLBACK")
+                return (False, 0)
+            remaining = free_total - amount
+            cur.execute("INSERT INTO users (user_id, free_remaining) VALUES (?, ?)", (user_id, remaining))
+            conn.commit()
+            return (True, remaining)
+        free_remaining = row[0] or 0
+        if free_remaining < amount:
+            conn.execute("ROLLBACK")
+            return (False, free_remaining)
+        cur.execute("UPDATE users SET free_remaining = free_remaining - ? WHERE user_id=?", (amount, user_id))
+        conn.commit()
+        return (True, free_remaining - amount)
+    except sqlite3.OperationalError:
+        conn.execute("ROLLBACK")
+        return (False, 0)
 
-def quota_message_personal(user_id: str, group_id: str) -> str:
-    """个人免费用尽——中英双语提示"""
-    link = sub_link(user_id, group_id)
-    return f"⚠️ 您的免费翻译额度（5,000字）已用完。\nSubscribe here: {link}"
+# ===================== Flask 应用 =====================
+app = Flask(__name__)
 
-def quota_message_group(user_id: str, group_id: str) -> str:
-    """群池用尽——中英双语提示"""
-    link = sub_link(user_id, group_id)
-    return f"⚠️ 本群翻译额度已用尽，请续费。\nSubscribe here: {link}"
-
-def send_language_selection_card(reply_token, group_id):
-    version = get_card_version(group_id)
-
-    def btn(label, code, color):
-        return {
-            "type": "button",
-            "style": "primary",
-            "color": color,
-            "action": {
-                "type": "message",
-                "label": label,
-                "text": f"/lang {code} v{version}"  # 带版本号，旧卡自动失效
-            }
-        }
-
-    contents = [
-        btn("🇺🇸 English", "en",   "#166534"),
-        btn("🇨🇳 简体中文", "zh-cn", "#2563EB"),
-        btn("🇹🇼 繁體中文", "zh-tw", "#1D4ED8"),
-        btn("🇯🇵 日本語",   "ja",    "#B91C1C"),
-        btn("🇰🇷 한국어",   "ko",    "#7E22CE"),
-        btn("🇹🇭 ภาษาไทย",  "th",    "#D97706"),
-        btn("🇻🇳 Tiếng Việt", "vi",  "#F97316"),
-        btn("🇫🇷 Français", "fr",    "#0E7490"),
-        btn("🇪🇸 Español",  "es",    "#16A34A"),
-        btn("🇩🇪 Deutsch",  "de",    "#2563EB"),
-        btn("🇮🇩 Bahasa Indonesia", "id", "#166534"),
-        btn("🇮🇳 हिन्दी",   "hi",    "#B91C1C"),
-        btn("🇮🇹 Italiano", "it",    "#16A34A"),
-        btn("🇵🇹 Português","pt",    "#F97316"),
-        btn("🇷🇺 Русский",  "ru",    "#7E22CE"),
-        btn("🇸🇦 العربية",  "ar",    "#B91C1C"),
-        {
-            "type":"button", "style":"secondary",
-            "action":{"type":"message","label":"🔄 Reset","text":"/resetlang"}
-        }
-    ]
-
-    bubble = {
-        "type": "bubble",
-        "header": {
-            "type": "box",
-            "layout": "vertical",
-            "contents": [
-                {"type": "text",
-                 "text": f"🌍 Select translation languages (v{version})",
-                 "weight": "bold", "size": "lg", "align": "center"}
-            ],
-            "backgroundColor": "#FFCC80"
-        },
-        "body": {
-            "type":"box",
-            "layout":"vertical",
-            "spacing":"sm",
-            "contents": contents
-        }
-    }
-
-    flex_message = FlexSendMessage(
-        alt_text="Please select translation language",
-        contents=bubble
-    )
-    line_bot_api.reply_message(reply_token, flex_message)
-
-# ---------------------- 回调主流程 ----------------------
+# ---------------- LINE Webhook ----------------
 @app.route("/callback", methods=["POST"])
-def callback():
-    events = request.get_json().get("events", [])
-    for event in events:
+def line_webhook():
+    # 校验 LINE 签名
+    signature = request.headers.get("X-Line-Signature", "")
+    body = request.get_data(as_text=True)
+    if LINE_CHANNEL_SECRET:
+        digest = hmac.new(LINE_CHANNEL_SECRET.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).digest()
+        valid_signature = base64.b64encode(digest).decode("utf-8")
+        if signature != valid_signature:
+            abort(400)
+
+    data = json.loads(body) if body else {}
+    for event in data.get("events", []):
+        etype = event.get("type")
+        source = event.get("source", {})
+        user_id = source.get("userId")
+        group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
-        if not reply_token:
+
+        if etype == "join":
+            # 进群 → 立即发卡
+            flex = build_language_selection_flex()
+            alt_text = "[Translator Bot] Please select a language / 請選擇語言"
+            send_reply_message(reply_token, [{"type": "flex", "altText": alt_text, "contents": flex}])
             continue
 
-        source   = event.get("source", {})
-        group_id = source.get("groupId") or source.get("roomId") or "private"
-        user_id  = source.get("userId", "unknown")
-        key      = f"{group_id}_{user_id}"
-
-        # 统一取昵称与头像；头像是否展示取决于好友关系
-        try:
-            if "groupId" in source:
-                profile_url = f"https://api.line.me/v2/bot/group/{group_id}/member/{user_id}"
-            elif "roomId" in source:
-                profile_url = f"https://api.line.me/v2/bot/room/{group_id}/member/{user_id}"
-            else:
-                profile_url = f"https://api.line.me/v2/bot/profile/{user_id}"
-            r = requests.get(profile_url, headers={"Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}, timeout=5)
-            if r.status_code == 200:
-                pd = r.json()
-                user_name   = pd.get("displayName", "User")
-                picture_url = pd.get("pictureUrl", "")
-            else:
-                user_name   = "User"
-                picture_url = ""
-        except Exception:
-            user_name   = "User"
-            picture_url = ""
-
-        friend_ok = is_friend(user_id)
-        user_avatar = picture_url if (friend_ok and picture_url) else "https://i.imgur.com/sTqykvy.png"
-
-        # 入群：发语言卡
-        if event["type"] == "join":
-            if group_id and not has_sent_card(group_id):
-                send_language_selection_card(reply_token, group_id)
-                mark_card_sent(group_id)
-            continue
-
-        # 退群：清理该群设置
-        if event["type"] == "leave":
-            if group_id:
-                conn = sqlite3.connect(DATABASE)
-                c = conn.cursor()
-                c.execute('DELETE FROM group_settings WHERE group_id=?', (group_id,))
-                c.execute('DELETE FROM language_prefs WHERE group_id=?', (group_id,))
-                conn.commit(); conn.close()
-            continue
-
-        # 文本消息
-        if event["type"] == "message" and event["message"]["type"] == "text":
-            user_text = (event["message"]["text"] or "").strip()
-
-            # A) 全群重置（/re /reset /resetlang）
-            if user_text.lower() in LANG_RESET_ALIASES:
-                bump_card_version(group_id)  # 版本+1并清空
-                send_language_selection_card(reply_token, group_id)
-                mark_card_sent(group_id)     # 重置后立刻标记为已发卡，避免重复刷卡
-                continue  # 注意：不要 return
-
-            # B) 解析“新卡按钮”点击（只认当前版本）
-            parsed = parse_lang_payload(user_text)
-            if parsed:
-                code, v = parsed
-                current_v = get_card_version(group_id)
-                if v != current_v:
-                    reply_to_line(reply_token, [{
-                        "type": "text",
-                        "text": "这张语言卡已过期，请点击最新的一张（标题里显示 v 号）。"
-                    }])
-                    continue
-                if code not in LANGUAGES:
-                    reply_to_line(reply_token, [{"type":"text","text":"不支持的语言代码"}])
-                    continue
-
-                langs_now = get_user_langs_db(group_id, user_id, current_v) or []
-                if code not in langs_now:
-                    langs_now.append(code)
-
-                set_user_langs_db(group_id, user_id, current_v, langs_now)
-                user_language_settings[key] = langs_now  # 可选缓存
-                reply_to_line(reply_token, [{"type":"text","text":"✅ Your languages: " + ", ".join(langs_now)}])
+        if etype == "message" and (event.get("message", {}).get("type") == "text"):
+            text = event["message"]["text"] or ""
+            # A) 重置指令：清空本群语言偏好并发卡
+            if is_reset_command(text):
+                cur.execute("DELETE FROM user_prefs WHERE group_id=?", (group_id,))
+                conn.commit()
+                flex = build_language_selection_flex()
+                alt_text = "[Translator Bot] Please select a language / 請選擇語言"
+                send_reply_message(reply_token, [{"type": "flex", "altText": alt_text, "contents": flex}])
                 continue
 
-            # C) 正常文本 → 检查是否已选语言（只看当前版本）
-            current_v = get_card_version(group_id)
-            langs = get_user_langs_db(group_id, user_id, current_v) or user_language_settings.get(key, [])
-            if not langs:
-                # 建议：新成员也直接发卡（即便之前发过）
-                send_language_selection_card(reply_token, group_id)
-                if not has_sent_card(group_id):
-                    mark_card_sent(group_id)
-                continue  # 已发卡则本条消息不翻译
+            # 非群聊直接忽略（遵循你的逻辑）
+            if not group_id:
+                continue
 
-            # D) 配额判定与扣减（核心规则）
-            text_len = len(user_text)
-            messages = []
+            # B) 统计本群目标语言（排除发送者本人的设置）
+            cur.execute("SELECT user_id, target_lang FROM user_prefs WHERE group_id=?", (group_id,))
+            prefs = cur.fetchall()
+            targets = {lang for (uid, lang) in prefs if uid != user_id and lang}
+            if not targets:
+                # 没人设过 → 引导发卡（reply 一次，不骚扰）
+                tip = "請先設定翻譯語言，輸入 /re /reset /resetlang 會出現語言卡片。\nSet your language with /re."
+                send_reply_message(reply_token, [{"type": "text", "text": tip}])
+                continue
 
-            if is_group_activated(group_id):
-                # 付费群：只扣群池（原子扣减）
-                ok, remaining = consume_group_quota(group_id, text_len)
+            # C) 翻译
+            translations = []
+            first_lang = next(iter(targets))
+            result = translate_text(text, first_lang)
+            if not result:
+                send_reply_message(reply_token, [{"type": "text", "text": "翻譯服務繁忙，請稍後再試 / Translation is busy, please retry."}])
+                continue
+            first_txt, detected_src = result
+            translations.append((language_name(first_lang), first_txt))
+            for tl in targets:
+                if tl == first_lang: continue
+                r = translate_text(text, tl, source_lang=detected_src)
+                if r: translations.append((language_name(tl), r[0]))
+
+            # D) 扣费：群池优先（如果本群已绑定套餐），否则走个人 5000
+            chars_used = len(text) * len(targets)
+            cur.execute("SELECT plan_type, plan_remaining, plan_owner FROM groups WHERE group_id=?", (group_id,))
+            group_plan = cur.fetchone()
+            if group_plan:
+                ok = atomic_deduct_group_quota(group_id, chars_used)
                 if not ok:
-                    reply_to_line(reply_token, [{"type":"text","text": quota_message_group(user_id, group_id)}])
+                    alert = ("翻譯额度已用盡，請升級套餐。\n"
+                             "Translation quota exhausted, please upgrade your plan.")
+                    send_reply_message(reply_token, [{"type": "text", "text": alert}])
                     continue
-                update_usage(group_id, user_id, text_len)
             else:
-                # 未激活群：只走个人5000
-                if not check_user_quota(user_id, text_len):
-                    reply_to_line(reply_token, [{"type":"text","text": quota_message_personal(user_id, group_id)}])
+                ok, _remain = atomic_deduct_user_free_quota(user_id, chars_used)
+                if not ok:
+                    alert = ("您的免費翻譯额度已用完，請升級套餐。\n"
+                             "Your free translation quota is used up. Please upgrade your plan.")
+                    send_reply_message(reply_token, [{"type": "text", "text": alert}])
                     continue
-                update_usage(group_id, user_id, text_len)
 
-            # E) 翻译并回发（每种语言单独一条）
-            for lang in langs:
-                translated_text = translate(user_text, lang)
-                messages.append({
-                    "type": "text",
-                    "text": translated_text,
-                    "sender": {"name": f"Saygo ({lang})", "iconUrl": user_avatar}
-                })
+            # E) 头像（好友才显示）
+            avatar = None
+            if user_id and is_friend(user_id):
+                profile = get_user_profile(user_id, group_id)
+                avatar = profile.get("pictureUrl") or None
+            avatar = avatar or BOT_AVATAR_FALLBACK
+            name = (get_user_profile(user_id, group_id).get("displayName") if user_id else "User") or "User"
 
-            # 同一事件只调用一次 reply
-            reply_to_line(reply_token, messages)
+            # F) 回传 Flex
+            flex_msg = build_translation_flex(name, avatar, text, translations)
+            langs_list = ", ".join([lang for (lang, _) in translations])
+            alt_text = f"Translated to: {langs_list}"[:350]  # alt 文本保守长度
+            send_reply_message(reply_token, [{"type": "flex", "altText": alt_text, "contents": flex_msg}])
 
-    return jsonify(success=True), 200
+        elif etype == "postback":
+            data = event.get("postback", {}).get("data", "")
+            if data.startswith("lang="):
+                lang_code = data.split("=", 1)[1]
+                # 保存用户在本群的目标语
+                cur.execute("INSERT OR REPLACE INTO user_prefs (user_id, group_id, target_lang) VALUES (?, ?, ?)",
+                            (user_id, group_id, lang_code))
+                conn.commit()
 
-# ---------------------- Stripe Webhook ----------------------
-@app.route('/stripe-webhook', methods=['POST'])
+                # 若该用户有套餐，尝试把本群绑定到他的套餐（受群数上限约束）
+                cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=?", (user_id,))
+                plan = cur.fetchone()
+                if plan:
+                    plan_type, max_groups = plan
+                    cur.execute("SELECT COUNT(*) FROM groups WHERE plan_owner=?", (user_id,))
+                    used = cur.fetchone()[0]
+                    if used < (max_groups or 0):
+                        cur.execute("SELECT 1 FROM groups WHERE group_id=?", (group_id,))
+                        exists = cur.fetchone()
+                        if not exists:
+                            quota = PLANS.get(plan_type, {}).get('quota', 0)
+                            cur.execute("INSERT INTO groups (group_id, plan_type, plan_owner, plan_remaining) VALUES (?, ?, ?, ?)",
+                                        (group_id, plan_type, user_id, quota))
+                            conn.commit()
+                    else:
+                        alert = (f"當前套餐最多可用於{max_groups}個群組，請升級套餐。\n"
+                                 f"Current plan allows up to {max_groups} groups. Please upgrade for more.")
+                        send_reply_message(reply_token, [{"type": "text", "text": alert}])
+
+                confirm = (f"已將您的翻譯語言設定為 {language_name(lang_code)}.\n"
+                           f"Your translation language is set to {language_name(lang_code)}.")
+                send_reply_message(reply_token, [{"type": "text", "text": confirm}])
+
+    return "OK"
+
+# ---------------- Stripe Webhook ----------------
+@app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
-    data = request.get_json(silent=True) or {}
-    event_type = data.get('type')
-    logging.info(f"🔔 webhook: {event_type}")
-
-    # 档位 → 群池额度
-    quota_mapping = {
-        'Starter': 300000,
-        'Basic':   1000000,
-        'Pro':     2000000,
-        'Expert':  4000000
-    }
-    # 档位 → 允许激活的群数量
-    allowed_mapping = {
-        'Starter': 1,
-        'Basic':   3,
-        'Pro':     5,
-        'Expert': 10
-    }
-
-    if event_type == 'checkout.session.completed':
-        obj = (data.get('data') or {}).get('object') or {}
-        metadata = obj.get('metadata') or {}
-        group_id = metadata.get('group_id')
-        line_id  = metadata.get('line_id')   # ← 不再给默认值
-        plan     = metadata.get('plan', 'Starter')
-
-        if not line_id:
-            logging.warning("checkout.session.completed 缺 line_id，忽略写库")
-            return jsonify(success=True), 200
-
-        quota_amount   = quota_mapping.get(plan, 0)
-        allowed_groups = allowed_mapping.get(plan, 1)
-
-        conn = sqlite3.connect(DATABASE); c = conn.cursor()
-        # 读/初始化购买者的套餐上限与当前已绑定群
-        c.execute('SELECT allowed_group_count, current_group_ids FROM user_plan WHERE user_id=?', (line_id,))
-        row = c.fetchone()
-        if row:
-            try:
-                bound_ids = json.loads(row[1] or '[]')
-            except Exception:
-                bound_ids = []
-        else:
-            bound_ids = []
-        # 覆盖 allowed_group_count（也可按你的商业规则只升级时覆盖）
-        c.execute('INSERT OR REPLACE INTO user_plan (user_id, allowed_group_count, current_group_ids) VALUES (?, ?, ?)',
-                  (line_id, allowed_groups, json.dumps(bound_ids)))
-        conn.commit()
-
-        def push_text(to_id, text):
-            try:
-                line_bot_api.push_message(to_id, TextSendMessage(text=text))
-            except Exception:
-                logging.exception("push failed")
-
-        if group_id:
-            # 上限检查：未绑定且已达上限 -> 不激活，提示升级
-            if group_id not in bound_ids and len(bound_ids) >= allowed_groups:
-                push_text(line_id, f"当前套餐最多支持 {allowed_groups} 个群。已达上限，无法激活新群（{group_id}）。请升级套餐。")
-                conn.close()
-                return jsonify(success=True), 200
-
-            # 写入绑定列表（若未绑定）
-            if group_id not in bound_ids:
-                bound_ids.append(group_id)
-                c.execute('UPDATE user_plan SET current_group_ids=? WHERE user_id=?',
-                          (json.dumps(bound_ids), line_id))
-                conn.commit()
-
-            # 激活/重置群池额度
-            activate_group_quota(group_id, line_id, quota_amount)
-
-            # 标记该 LINE 用户为已付费（个人通道不限量）
-            try:
-                c.execute('''
-                    INSERT INTO user_quota (user_id, quota, is_paid)
-                    VALUES (?, 0, 1)
-                    ON CONFLICT(user_id) DO UPDATE SET is_paid=1
-                ''', (line_id,))
-                conn.commit()
-            except Exception:
-                logging.exception("mark paid user failed")
-
-            # 发送一次成功提示（可保留）
-            push_text(line_id, f"🎉 套餐已生效：{plan}\n群 {group_id} 已激活，额度：{quota_amount} 字。")
-
-        conn.close()
-
-    elif event_type == 'invoice.payment_succeeded':
-        # 月度续费成功：静默为已绑定的群重置当期额度（不额外推送）
-        obj = (data.get('data') or {}).get('object') or {}
-        metadata = obj.get('metadata') or {}
-        line_id = metadata.get('line_id')   # ← 不再给默认值
-        plan    = metadata.get('plan', 'Starter')
-
-        if not line_id:
-            logging.warning("invoice.payment_succeeded 缺 line_id，忽略写库")
-            return jsonify(success=True), 200
-
-        quota_amount = quota_mapping.get(plan, 0)
-
-        conn = sqlite3.connect(DATABASE); c = conn.cursor()
-        c.execute('SELECT current_group_ids FROM user_plan WHERE user_id=?', (line_id,))
-        row = c.fetchone()
+    payload = request.get_data(as_text=False)
+    sig_header = request.headers.get("Stripe-Signature", "")
+    # 签名校验（简化版本）
+    if STRIPE_WEBHOOK_SECRET:
         try:
-            bound_ids = json.loads(row[0]) if row and row[0] else []
+            timestamp, signature = None, None
+            for part in sig_header.split(","):
+                k, v = part.split("=", 1)
+                if k == "t":  timestamp = v
+                elif k == "v1": signature = v
+            signed_payload = f"{timestamp}.{payload.decode('utf-8')}"
+            expected = hmac.new(STRIPE_WEBHOOK_SECRET.encode('utf-8'),
+                                signed_payload.encode('utf-8'), hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(expected, signature or ""):
+                abort(400)
         except Exception:
-            bound_ids = []
-        for gid in bound_ids:
-            activate_group_quota(gid, line_id, quota_amount)  # 覆盖为新的周期额度
-        conn.commit(); conn.close()
+            abort(400)
 
-    return jsonify(success=True), 200
+    try:
+        event = json.loads(payload.decode('utf-8'))
+    except:
+        abort(400)
 
-# ---------------------- 入口 ----------------------
+    etype = event.get("type")
+    obj   = event.get("data", {}).get("object", {})
+    if etype == "checkout.session.completed":
+        # 新购/首购
+        user_id   = obj.get("client_reference_id")  # 作为购买者的 LINE userId
+        sub_id    = obj.get("subscription")
+        metadata  = obj.get("metadata") or {}
+        plan_name = (metadata.get("plan") or "").capitalize() or None
+        group_id  = metadata.get("group_id")  # 若传了 group_id，则立即为该群激活
+
+        if not plan_name and obj.get("display_items"):
+            plan_name = obj["display_items"][0].get("plan", {}).get("nickname")
+        if plan_name and plan_name not in PLANS:
+            plan_name = None
+
+        if user_id and plan_name:
+            max_groups = PLANS[plan_name]['max_groups']
+            cur.execute("INSERT OR REPLACE INTO user_plans (user_id, plan_type, max_groups, subscription_id) VALUES (?, ?, ?, ?)",
+                        (user_id, plan_name, max_groups, sub_id))
+            conn.commit()
+
+            # 如果 metadata 带了 group_id → 当场尝试绑定并初始化额度（受群数上限）
+            if group_id:
+                cur.execute("SELECT COUNT(*) FROM groups WHERE plan_owner=?", (user_id,))
+                used = cur.fetchone()[0]
+                if used < max_groups:
+                    cur.execute("SELECT 1 FROM groups WHERE group_id=?", (group_id,))
+                    exists = cur.fetchone()
+                    if not exists:
+                        quota = PLANS[plan_name]['quota']
+                        cur.execute("INSERT INTO groups (group_id, plan_type, plan_owner, plan_remaining) VALUES (?, ?, ?, ?)",
+                                    (group_id, plan_name, user_id, quota))
+                        conn.commit()
+                else:
+                    send_push_text(user_id, f"當前套餐最多可用於 {max_groups} 個群組，已達上限，無法激活新群（{group_id}）。請升級套餐。")
+
+            # 友好通知
+            send_push_text(user_id, f"Thank you for purchasing the {plan_name} plan! Your plan is now active.")
+
+    elif etype == "invoice.payment_succeeded":
+        # 续费成功 → 静默补额（按“补额”语义：在现有余额上 + 本期配额）
+        sub_id = obj.get("subscription")
+        if obj.get("billing_reason") == "subscription_cycle" and sub_id:
+            cur.execute("SELECT user_id, plan_type FROM user_plans WHERE subscription_id=?", (sub_id,))
+            row = cur.fetchone()
+            if row:
+                user_id, plan_type = row
+                add_quota = PLANS.get(plan_type, {}).get('quota', 0)
+                cur.execute("UPDATE groups SET plan_remaining = COALESCE(plan_remaining,0) + ? WHERE plan_owner=?",
+                            (add_quota, user_id))
+                conn.commit()
+
+    return "OK"
+
+# ---------------- 启动 ----------------
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
