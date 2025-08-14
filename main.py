@@ -10,9 +10,19 @@ import requests
 from flask import Flask, request, abort
 
 # ===================== 配置 =====================
-LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "<LINE_CHANNEL_ACCESS_TOKEN>")
-LINE_CHANNEL_SECRET       = os.getenv("LINE_CHANNEL_SECRET", "<LINE_CHANNEL_SECRET>")
-STRIPE_WEBHOOK_SECRET     = os.getenv("STRIPE_WEBHOOK_SECRET", "<STRIPE_WEBHOOK_SECRET>")
+LINE_CHANNEL_ACCESS_TOKEN = (
+    os.getenv("LINE_ACCESS_TOKEN")  # 先读你在 Render 设置的变量
+    or os.getenv("LINE_CHANNEL_ACCESS_TOKEN")  # 再读旧代码用的变量名
+    or "<LINE_CHANNEL_ACCESS_TOKEN>"
+)
+
+LINE_CHANNEL_SECRET = (
+    os.getenv("LINE_CHANNEL_SECRET")
+    or os.getenv("LINE_SECRET")  # 兼容有人用 LINE_SECRET
+    or "<LINE_CHANNEL_SECRET>"
+)
+
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "<STRIPE_WEBHOOK_SECRET>")
 
 BOT_AVATAR_FALLBACK = "https://i.imgur.com/sTqykvy.png"
 
