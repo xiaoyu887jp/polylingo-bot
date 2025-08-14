@@ -127,35 +127,76 @@ def get_user_profile(user_id, group_id=None):
     return {}
 
 def build_language_selection_flex():
-    """语言选择 Flex（postback：lang=<code>）"""
-    languages = [
-        ("English", "en"), ("中文(简体)", "zh-CN"),
-        ("中文(繁體)", "zh-TW"), ("日本語", "ja"),
-        ("한국어", "ko"), ("ไทย", "th"),
-        ("Tiếng Việt", "vi"), ("Indonesia", "id"),
-        ("Español", "es"), ("Français", "fr")
+    """语言选择 Flex（message：点击直接发送 en/ja/...）——卡片式双列版"""
+    # 快速构造一个“卡片按钮”
+    def card(label, code, bg):
+        return {
+            "type": "box",
+            "layout": "vertical",
+            "action": {"type": "message", "label": label, "text": code},
+            "backgroundColor": bg,
+            "cornerRadius": "md",
+            "paddingAll": "12px",
+            "contents": [
+                {"type": "text", "text": label, "align": "center", "weight": "bold", "color": "#FFFFFF"}
+            ]
+        }
+
+    # 两列一行
+    def row(left, right):
+        return {
+            "type": "box", "layout": "horizontal", "spacing": "12px",
+            "contents": [{"type": "box", "layout": "vertical", "flex": 1, "contents": [left]},
+                         {"type": "box", "layout": "vertical", "flex": 1, "contents": [right]}]
+        }
+
+    # 色板（深色系，统一观感）
+    c_green  = "#2E7D32"
+    c_blue   = "#1976D2"
+    c_red    = "#D32F2F"
+    c_purple = "#7B1FA2"
+    c_orange = "#F57C00"
+    c_teal   = "#0097A7"
+    c_lime   = "#43A047"
+
+    rows = [
+        row(card("🇺🇸 English", "en", c_green),   card("🇨🇳 简体中文", "zh-cn", "#FF8A00")),
+        row(card("🇹🇼 繁體中文", "zh-tw", c_blue), card("🇯🇵 日本語",  "ja",    c_red)),
+        row(card("🇰🇷 한국어",  "ko", c_purple),   card("🇹🇭 ภาษาไทย", "th",   c_orange)),
+        row(card("🇻🇳 Tiếng Việt", "vi", c_orange), card("🇫🇷 Français", "fr",  c_teal)),
+        row(card("🇪🇸 Español", "es", c_green),     card("🇩🇪 Deutsch",  "de",  c_blue)),
+        row(card("🇮🇩 Bahasa Indonesia", "id", c_green), card("🇮🇳 हिन्दी", "hi", "#C62828")),
+        row(card("🇮🇹 Italiano", "it", c_lime),     card("🇵🇹 Português", "pt", c_orange)),
+        row(card("🇷🇺 Русский", "ru", c_purple),    card("🇸🇦 العربية", "ar",  "#D84315")),
     ]
-    colors = ["#55ACEE", "#FF9933", "#FF5E5E", "#7CBDFF", "#FFD55E",
-              "#99CC66", "#66CCCC", "#CC6699", "#FF66FF", "#66FF66"]
-    rows = []
-    for i in range(0, len(languages), 2):
-        row = {"type": "box", "layout": "horizontal", "contents": []}
-        if i > 0: row["margin"] = "md"
-        for j in range(2):
-            if i + j >= len(languages): break
-            name, code = languages[i + j]
-            button = {
-                "type": "button",
-                "action": {"type": "postback", "label": name, "data": f"lang={code}"},
-                "style": "primary", "color": colors[i + j], "margin": "sm"
-            }
-            row["contents"].append(button)
-        rows.append(row)
-    footer_note = {"type": "text", "text": "Language Selection", "wrap": True,
-                   "color": "#888888", "size": "xs", "align": "center"}
-    return {"type": "bubble",
-            "body": {"type": "box", "layout": "vertical", "contents": rows},
-            "footer": {"type": "box", "layout": "vertical", "contents": [footer_note]}}
+
+    footer = {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "8px",
+        "contents": [
+            {"type": "separator"},
+            {
+                "type": "button", "style": "secondary", "height": "sm",
+                "action": {"type": "message", "label": "🔄 Reset", "text": "/resetlang"}
+            },
+            {"type": "text", "text": "Language Selection", "wrap": True,
+             "color": "#9CA3AF", "size": "xs", "align": "center"}
+        ]
+    }
+
+    return {
+        "type": "bubble",
+        "header": {
+            "type": "box", "layout": "vertical",
+            "backgroundColor": "#FFE3B3",
+            "contents": [{
+                "type": "text", "text": "🌍 Please select translation language",
+                "weight": "bold", "size": "lg", "align": "center", "color": "#1F2937"
+            }]
+        },
+        "body": {"type": "box", "layout": "vertical", "spacing": "12px", "contents": rows + [footer]}
+    }
 
 def build_translation_flex(user_name, avatar_url, original_text, translations):
     """翻译展示 Flex：头像+原文+多语言结果"""
@@ -256,36 +297,33 @@ def line_webhook():
         valid_signature = base64.b64encode(digest).decode("utf-8")
         if signature != valid_signature:
             abort(400)
+if etype == "message" and (event.get("message", {}).get("type") == "text"):
+    text = event["message"]["text"] or ""
 
-    data = json.loads(body) if body else {}
-    for event in data.get("events", []):
-        etype = event.get("type")
-        source = event.get("source", {})
-        user_id = source.get("userId")
-        group_id = source.get("groupId") or source.get("roomId")
-        reply_token = event.get("replyToken")
+    # A) 重置指令：清空本群语言偏好并发卡
+    if is_reset_command(text):
+        cur.execute("DELETE FROM user_prefs WHERE group_id=?", (group_id,))
+        conn.commit()
+        flex = build_language_selection_flex()
+        alt_text = "[Translator Bot] Please select a language / 請選擇語言"
+        send_reply_message(reply_token, [{"type": "flex", "altText": alt_text, "contents": flex}])
+        continue
 
-        if etype == "join":
-            # 进群 → 立即发卡
-            flex = build_language_selection_flex()
-            alt_text = "[Translator Bot] Please select a language / 請選擇語言"
-            send_reply_message(reply_token, [{"type": "flex", "altText": alt_text, "contents": flex}])
-            continue
+    # B) 识别语言按钮（message 型）并保存
+    LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
+    if text.strip().lower() in LANG_CODES:
+        lang_code = text.strip().lower()
+        cur.execute(
+            "INSERT OR REPLACE INTO user_prefs (user_id, group_id, target_lang) VALUES (?, ?, ?)",
+            (user_id, group_id, lang_code)
+        )
+        conn.commit()
+        send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {lang_code}"}])
+        continue
 
-        if etype == "message" and (event.get("message", {}).get("type") == "text"):
-            text = event["message"]["text"] or ""
-            # A) 重置指令：清空本群语言偏好并发卡
-            if is_reset_command(text):
-                cur.execute("DELETE FROM user_prefs WHERE group_id=?", (group_id,))
-                conn.commit()
-                flex = build_language_selection_flex()
-                alt_text = "[Translator Bot] Please select a language / 請選擇語言"
-                send_reply_message(reply_token, [{"type": "flex", "altText": alt_text, "contents": flex}])
-                continue
-
-            # 非群聊直接忽略（遵循你的逻辑）
-            if not group_id:
-                continue
+    # 非群聊直接忽略（遵循你的逻辑）
+    if not group_id:
+        continue
 
             # B) 统计本群目标语言（排除发送者本人的设置）
             cur.execute("SELECT user_id, target_lang FROM user_prefs WHERE group_id=?", (group_id,))
@@ -294,7 +332,7 @@ def line_webhook():
             if not targets:
                 # 没人设过 → 引导发卡（reply 一次，不骚扰）
                 tip = "請先設定翻譯語言，輸入 /re /reset /resetlang 會出現語言卡片。\nSet your language with /re."
-                send_reply_message(reply_token, [{"type": "text", "text": tip}])
+                send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {lang_code}"}])
                 continue
 
             # C) 翻译
