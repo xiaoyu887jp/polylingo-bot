@@ -40,12 +40,17 @@ PLANS = {
 RESET_ALIASES = {"/re", "/reset", "/resetlang"}
 
 # 语言名映射
+# 语言名映射（修正：补充 zh-cn / zh-tw，并提供大小写兼容）
 LANG_NAME_MAP = {
-    'en': 'English', 'zh-CN': 'Chinese (Simplified)', 'zh-TW': 'Chinese (Traditional)',
+    'en': 'English',
+    'zh-cn': 'Chinese (Simplified)', 'zh-tw': 'Chinese (Traditional)',
+    'zh-CN': 'Chinese (Simplified)', 'zh-TW': 'Chinese (Traditional)',
     'ja': 'Japanese', 'ko': 'Korean', 'th': 'Thai', 'vi': 'Vietnamese',
-    'id': 'Indonesian', 'es': 'Spanish', 'fr': 'French'
+    'id': 'Indonesian', 'es': 'Spanish', 'fr': 'French', 'de': 'German',
+    'hi': 'Hindi', 'it': 'Italian', 'pt': 'Portuguese', 'ru': 'Russian', 'ar': 'Arabic'
 }
-def language_name(code): return LANG_NAME_MAP.get(code, code)
+def language_name(code):
+    return LANG_NAME_MAP.get(code, LANG_NAME_MAP.get((code or '').lower(), code))
 
 # ===================== DB 初始化 =====================
 # autocommit 模式 + 并发友好设置
@@ -284,6 +289,28 @@ def atomic_deduct_user_free_quota(user_id: str, amount: int) -> (bool, int):
         conn.execute("ROLLBACK")
         return (False, 0)
 
+# === 新增：构造“对话气泡的 sender”（控制名字与头像） ===
+def build_sender(user_id: str, group_id: str | None, lang_code: str | None):
+    """
+    - 若用户已加好友：使用用户头像；否则使用机器人头像
+    - 名称：显示名 + (lang_code)，与截图一致（例如：'Saygo (en)'）
+    """
+    profile = get_user_profile(user_id, group_id) if user_id else {}
+    name = (profile.get("displayName") or "User")
+    if lang_code:
+        name = f"{name} ({lang_code})"
+    name = name[:20]  # 控制长度避免被 LINE 截断
+
+    icon = BOT_AVATAR_FALLBACK
+    try:
+        if user_id and is_friend(user_id):
+            icon = profile.get("pictureUrl") or BOT_AVATAR_FALLBACK
+    except Exception:
+        pass
+
+    return {"name": name, "iconUrl": icon}
+
+
 # ===================== Flask 应用 =====================
 app = Flask(__name__)
 
@@ -350,22 +377,24 @@ def line_webhook():
                 }])
                 continue
 
-            # C) 非群聊直接忽略（遵循你的逻辑）
+            # C) 非群聊直接忽略（sender 在 1:1 聊天不显示）
             if not group_id:
                 continue
 
-            # D) 统计本群目标语言（排除发送者本人）
+            # D) 统计本群目标语言（**包含发送者本人**，修复“已设语言仍被提示未设置”）
             cur.execute("SELECT user_id, target_lang FROM user_prefs WHERE group_id=?", (group_id,))
             prefs = cur.fetchall()
-            targets = {lang for (uid, lang) in prefs if uid != user_id and lang}
+            targets = [lang for (_uid, lang) in prefs if lang]
+            # 去重并统一小写，顺序保留
+            targets = list(dict.fromkeys([t.lower() for t in targets]))
             if not targets:
                 tip = "請先設定翻譯語言，輸入 /re /reset /resetlang 會出現語言卡片。\nSet your language with /re."
                 send_reply_message(reply_token, [{"type": "text", "text": tip}])
                 continue
 
-            # E) 翻译
-            translations = []
-            first_lang = next(iter(targets))
+            # E) 翻译（先用第一个语言翻译以获得 detected_src，再按同源批量翻）
+            translations = []  # [(lang_code, translated_text)]
+            first_lang = targets[0]
             result = translate_text(text, first_lang)
             if not result:
                 send_reply_message(reply_token, [{
@@ -374,16 +403,14 @@ def line_webhook():
                 }])
                 continue
             first_txt, detected_src = result
-            translations.append((language_name(first_lang), first_txt))
-            for tl in targets:
-                if tl == first_lang:
-                    continue
+            translations.append((first_lang, first_txt))
+            for tl in targets[1:]:
                 r = translate_text(text, tl, source_lang=detected_src)
                 if r:
-                    translations.append((language_name(tl), r[0]))
+                    translations.append((tl, r[0]))
 
             # F) 扣费：群池优先，否则走个人 5000
-            chars_used = len(text) * len(targets)
+            chars_used = len(text) * len(translations)
             cur.execute("SELECT plan_type, plan_remaining, plan_owner FROM groups WHERE group_id=?", (group_id,))
             group_plan = cur.fetchone()
             if group_plan:
@@ -401,20 +428,60 @@ def line_webhook():
                     send_reply_message(reply_token, [{"type": "text", "text": alert}])
                     continue
 
-            # G) 头像与展示
-            avatar = None
-            if user_id and is_friend(user_id):
-                profile = get_user_profile(user_id, group_id)
-                avatar = profile.get("pictureUrl") or None
-            avatar = avatar or BOT_AVATAR_FALLBACK
-            name = (get_user_profile(user_id, group_id).get("displayName") if user_id else "User") or "User"
+            # G) 使用“普通对话气泡”，每种语言单独一条；sender 控制名字与头像
+            messages = []
+            for lang_code, txt in translations:
+                sender = build_sender(user_id, group_id, lang_code)  # 好友=用户头像；未加好友=机器人头像
+                messages.append({
+                    "type": "text",
+                    "text": txt,     # 文本只放译文本身；语言代码体现在名字里：昵称 (en)
+                    "sender": sender
+                })
 
-            flex_msg = build_translation_flex(name, avatar, text, translations)
-            langs_list = ", ".join([lang for (lang, _) in translations])
-            alt_text = f"Translated to: {langs_list}"[:350]
-            send_reply_message(reply_token, [{
-                "type": "flex", "altText": alt_text, "contents": flex_msg
-            }])
+            # 一次 reply 最多 5 条
+            if messages:
+                send_reply_message(reply_token, messages[:5])
+
+        # 兼容旧卡：postback 选择语言，也统一回英文单行
+        elif etype == "postback":
+            data_pb = event.get("postback", {}).get("data", "")
+            if data_pb.startswith("lang="):
+                lang_code = data_pb.split("=", 1)[1]
+                cur.execute(
+                    "INSERT OR REPLACE INTO user_prefs (user_id, group_id, target_lang) VALUES (?, ?, ?)",
+                    (user_id, group_id, lang_code)
+                )
+                conn.commit()
+
+                # 若该用户有套餐，尝试把本群绑定到他的套餐（受上限约束）
+                cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=?", (user_id,))
+                plan = cur.fetchone()
+                if plan:
+                    plan_type, max_groups = plan
+                    cur.execute("SELECT COUNT(*) FROM groups WHERE plan_owner=?", (user_id,))
+                    used = cur.fetchone()[0]
+                    if used < (max_groups or 0):
+                        cur.execute("SELECT 1 FROM groups WHERE group_id=?", (group_id,))
+                        exists = cur.fetchone()
+                        if not exists:
+                            quota = PLANS.get(plan_type, {}).get('quota', 0)
+                            cur.execute(
+                                "INSERT INTO groups (group_id, plan_type, plan_owner, plan_remaining) VALUES (?, ?, ?, ?)",
+                                (group_id, plan_type, user_id, quota)
+                            )
+                            conn.commit()
+                    else:
+                        alert = (f"當前套餐最多可用於{max_groups}個群組，請升級套餐。\n"
+                                 f"Current plan allows up to {max_groups} groups. Please upgrade for more.")
+                        send_reply_message(reply_token, [{"type": "text", "text": alert}])
+
+                # 统一英文确认
+                send_reply_message(reply_token, [{
+                    "type": "text", "text": f"✅ Your languages: {lang_code}"
+                }])
+
+    return "OK"
+
 
         # 兼容旧卡：postback 选择语言，也统一回英文单行
         elif etype == "postback":
