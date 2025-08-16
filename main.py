@@ -63,7 +63,10 @@ cur.execute("""CREATE TABLE IF NOT EXISTS users (
     user_id TEXT PRIMARY KEY,
     free_remaining INTEGER
 )""")
+
+cur.execute("DROP TABLE IF EXISTS user_prefs")   # 只做一次的“重建”
 cur.execute("""CREATE TABLE IF NOT EXISTS user_prefs (
+CREATE TABLE IF NOT EXISTS user_prefs (
     user_id TEXT,
     group_id TEXT,
     target_lang TEXT,
@@ -102,6 +105,20 @@ def first_token(s: str) -> str:
 
 def is_reset_command(s: str) -> bool:
     return first_token(s) in RESET_ALIASES
+
+def is_friend(user_id: str):
+    """返回 True/False；接口不可用（403等）时返回 None"""
+    try:
+        r = requests.get(
+            f"https://api.line.me/v2/bot/friendship/status?userId={user_id}",
+            headers={"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"},
+            timeout=5
+        )
+        if r.status_code == 200:
+            return bool(r.json().get("friendFlag"))
+        return None   # ← 这行要与 if 对齐（或改成 else: return None）
+    except Exception:
+        return None
 
 def send_reply_message(reply_token, messages):
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"}
