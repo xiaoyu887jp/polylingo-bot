@@ -316,8 +316,6 @@ app = Flask(__name__)
 
 # ---------------- LINE Webhook ----------------
 
-# ---------------- LINE Webhook ----------------
-# ---------------- LINE Webhook ----------------
 @app.route("/callback", methods=["POST"])
 def line_webhook():
     # 1) 校验 LINE 签名
@@ -333,7 +331,7 @@ def line_webhook():
         if signature != valid_signature:
             abort(400)
 
-    # 2) 解析事件
+    # 2) 解析事件并逐个处理
     data = json.loads(body) if body else {}
     for event in data.get("events", []):
         etype = event.get("type")
@@ -442,10 +440,35 @@ def line_webhook():
                     (user_id, group_id, lang_code)
                 )
                 conn.commit()
+
+                # 若该用户有套餐，尝试把本群绑定到他的套餐（受上限约束）
+                cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=?", (user_id,))
+                plan = cur.fetchone()
+                if plan:
+                    plan_type, max_groups = plan
+                    cur.execute("SELECT COUNT(*) FROM groups WHERE plan_owner=?", (user_id,))
+                    used = cur.fetchone()[0]
+                    if used < (max_groups or 0):
+                        cur.execute("SELECT 1 FROM groups WHERE group_id=?", (group_id,))
+                        exists = cur.fetchone()
+                        if not exists:
+                            quota = PLANS.get(plan_type, {}).get('quota', 0)
+                            cur.execute(
+                                "INSERT INTO groups (group_id, plan_type, plan_owner, plan_remaining) VALUES (?, ?, ?, ?)",
+                                (group_id, plan_type, user_id, quota)
+                            )
+                            conn.commit()
+                    else:
+                        alert = (f"當前套餐最多可用於{max_groups}個群組，請升級套餐。\n"
+                                 f"Current plan allows up to {max_groups} groups. Please upgrade for more.")
+                        send_reply_message(reply_token, [{"type": "text", "text": alert}])
+
+                # 统一英文确认
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {lang_code}"}])
 
-    # 循环结束，统一返回
+    # 3) 循环结束，统一返回（整个函数里只保留这一处 return）
     return "OK"
+
 
 
         # 兼容旧卡：postback 选择语言，也统一回英文单行
