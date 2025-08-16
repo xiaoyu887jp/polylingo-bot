@@ -417,8 +417,9 @@ def line_webhook():
             result = translate_text(text, first_lang)
             if not result:
                 send_reply_message(reply_token, [{
-                 "type": "text",
-                 "text": "翻譯服務繁忙，請稍後再試 / Translation is busy, please retry."
+                    "type": "text",
+                    "text": "翻譯服務繁忙，請稍後再試 / Translation is busy, please retry."
+                 }])
                   continue
 
             # ✅ 补上这两行
