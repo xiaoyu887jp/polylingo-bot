@@ -64,14 +64,18 @@ cur.execute("""CREATE TABLE IF NOT EXISTS users (
     free_remaining INTEGER
 )""")
 
-cur.execute("DROP TABLE IF EXISTS user_prefs")   # 只做一次的“重建”
-cur.execute("""CREATE TABLE IF NOT EXISTS user_prefs (
+# 只在首次结构变更时用；成功跑一次后可删/注释掉这一行
+cur.execute("DROP TABLE IF EXISTS user_prefs")
+
+cur.execute("""
 CREATE TABLE IF NOT EXISTS user_prefs (
-    user_id TEXT,
-    group_id TEXT,
+    user_id     TEXT,
+    group_id    TEXT,
     target_lang TEXT,
-    PRIMARY KEY(user_id, group_id)
-)""")
+    PRIMARY KEY (user_id, group_id, target_lang)
+)
+""")
+
 cur.execute("""CREATE TABLE IF NOT EXISTS groups (
     group_id TEXT PRIMARY KEY,
     plan_type TEXT,
