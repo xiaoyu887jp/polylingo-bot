@@ -9,6 +9,9 @@ import hashlib
 import base64
 import requests
 from flask import Flask, request, abort
+from concurrent.futures import ThreadPoolExecutor
+HTTP = requests.Session()   # 复用连接，减少握手耗时
+
 
 # ===================== 配置 =====================
 LINE_CHANNEL_ACCESS_TOKEN = (
@@ -249,7 +252,7 @@ def translate_text(text, target_lang, source_lang=None):
     url = ("https://translate.googleapis.com/translate_a/single?client=gtx&dt=t"
            f"&sl={sl}&tl={target_lang}&q=" + requests.utils.requote_uri(text))
     try:
-        resp = requests.get(url, timeout=10)
+        resp = HTTP.get(url, timeout=4)  # 用全局 Session 复用连接，超时调小更快
         if resp.status_code != 200:
             return None
         data = resp.json()
@@ -408,20 +411,28 @@ def line_webhook():
                 send_reply_message(reply_token, [{"type": "text", "text": tip}])
                 continue
 
-            # B5) 翻译（先译第一个确定 detected_src，再批量）
+            # B5) 翻译（先译第一个确定 detected_src，再并发批量）
             translations = []
             first_lang = targets[0]
             result = translate_text(text, first_lang)
             if not result:
-                send_reply_message(reply_token, [{"type": "text", "text": "翻譯服務繁忙，請稍後再試 / Translation is busy, please retry."}])
-                continue
+                send_reply_message(reply_token, [{
+                 "type": "text",
+                 "text": "翻譯服務繁忙，請稍後再試 / Translation is busy, please retry."
+                  continue
+
+            # ✅ 补上这两行
             first_txt, detected_src = result
             translations.append((first_lang, first_txt))
-            for tl in targets[1:]:
-                r = translate_text(text, tl, source_lang=detected_src)
-                if r:
-                    translations.append((tl, r[0]))
 
+            others = targets[1:]
+            if others:
+                 with ThreadPoolExecutor(max_workers=min(4, len(others))) as pool:
+                 futs = {tl: pool.submit(translate_text, text, tl, detected_src) for tl in others}
+                    for tl in others:
+                    r = futs[tl].result()
+                    if r: 
+                    translations.append((tl, r[0]))
             # B6) 扣费：群池优先，否则个人5000
             chars_used = len(text) * len(translations)
             cur.execute("SELECT plan_type, plan_remaining, plan_owner FROM groups WHERE group_id=?", (group_id,))
