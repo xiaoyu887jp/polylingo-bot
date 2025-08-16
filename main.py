@@ -292,16 +292,12 @@ def build_sender(user_id: str, group_id: str | None, lang_code: str | None):
     name = (profile.get("displayName") or "User")
     if lang_code:
         name = f"{name} ({lang_code})"
-    name = name[:20]  # 避免被 LINE 截断
+    name = name[:20]
 
-    icon = BOT_AVATAR_FALLBACK
-    try:
-        fr = is_friend(user_id)
-        if fr is True:  # 已加好友才显示用户头像
-            icon = profile.get("pictureUrl") or BOT_AVATAR_FALLBACK
-    except Exception:
-        pass
+    # 总是优先用用户头像（拿不到再用备用图）
+    icon = profile.get("pictureUrl") or BOT_AVATAR_FALLBACK
     return {"name": name, "iconUrl": icon}
+
 
 # ===================== Flask 应用 =====================
 app = Flask(__name__)
