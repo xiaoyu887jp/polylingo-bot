@@ -322,12 +322,7 @@ def build_sender(user_id: str, group_id: str | None, lang_code: str | None):
         name = f"{name} ({lang_code})"
     name = name[:20]  # 控制长度避免被 LINE 截断
 
-    icon = BOT_AVATAR_FALLBACK
-    try:
-        if user_id and is_friend(user_id):
-            icon = profile.get("pictureUrl") or BOT_AVATAR_FALLBACK
-    except Exception:
-        pass
+    icon = profile.get("pictureUrl") or BOT_AVATAR_FALLBACK
 
     return {"name": name, "iconUrl": icon}
 
