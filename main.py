@@ -469,48 +469,6 @@ def line_webhook():
     # 3) 循环结束，统一返回（整个函数里只保留这一处 return）
     return "OK"
 
-
-
-        # 兼容旧卡：postback 选择语言，也统一回英文单行
-        elif etype == "postback":
-            data_pb = event.get("postback", {}).get("data", "")
-            if data_pb.startswith("lang="):
-                lang_code = data_pb.split("=", 1)[1]
-                cur.execute(
-                    "INSERT OR REPLACE INTO user_prefs (user_id, group_id, target_lang) VALUES (?, ?, ?)",
-                    (user_id, group_id, lang_code)
-                )
-                conn.commit()
-
-                # 若该用户有套餐，尝试把本群绑定到他的套餐（受上限约束）
-                cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=?", (user_id,))
-                plan = cur.fetchone()
-                if plan:
-                    plan_type, max_groups = plan
-                    cur.execute("SELECT COUNT(*) FROM groups WHERE plan_owner=?", (user_id,))
-                    used = cur.fetchone()[0]
-                    if used < (max_groups or 0):
-                        cur.execute("SELECT 1 FROM groups WHERE group_id=?", (group_id,))
-                        exists = cur.fetchone()
-                        if not exists:
-                            quota = PLANS.get(plan_type, {}).get('quota', 0)
-                            cur.execute(
-                                "INSERT INTO groups (group_id, plan_type, plan_owner, plan_remaining) VALUES (?, ?, ?, ?)",
-                                (group_id, plan_type, user_id, quota)
-                            )
-                            conn.commit()
-                    else:
-                        alert = (f"當前套餐最多可用於{max_groups}個群組，請升級套餐。\n"
-                                 f"Current plan allows up to {max_groups} groups. Please upgrade for more.")
-                        send_reply_message(reply_token, [{"type": "text", "text": alert}])
-
-                # 统一英文确认
-                send_reply_message(reply_token, [{
-                    "type": "text", "text": f"✅ Your languages: {lang_code}"
-                }])
-
-    return "OK"
-
 # ---------------- Stripe Webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
