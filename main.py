@@ -317,52 +317,58 @@ app = Flask(__name__)
 # ---------------- LINE Webhook ----------------
 
 # ---------------- LINE Webhook ----------------
+# ---------------- LINE Webhook ----------------
 @app.route("/callback", methods=["POST"])
 def line_webhook():
-    # 校验 LINE 签名
+    # 1) 校验 LINE 签名
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(as_text=True)
     if LINE_CHANNEL_SECRET:
-        digest = hmac.new(LINE_CHANNEL_SECRET.encode("utf-8"),
-                          body.encode("utf-8"),
-                          hashlib.sha256).digest()
+        digest = hmac.new(
+            LINE_CHANNEL_SECRET.encode("utf-8"),
+            body.encode("utf-8"),
+            hashlib.sha256
+        ).digest()
         valid_signature = base64.b64encode(digest).decode("utf-8")
         if signature != valid_signature:
             abort(400)
 
+    # 2) 解析事件
     data = json.loads(body) if body else {}
     for event in data.get("events", []):
         etype = event.get("type")
-        source = event.get("source", {})
+        source = event.get("source", {}) or {}
         user_id = source.get("userId")
         group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
 
-        # 进群：立即发语言选择卡
+        # --- A) 进群：发送语言选择卡 ---
         if etype == "join":
             flex = build_language_selection_flex()
-            alt_text = "[Translator Bot] Please select a language / 請選擇語言"
             send_reply_message(reply_token, [{
-                "type": "flex", "altText": alt_text, "contents": flex
+                "type": "flex",
+                "altText": "[Translator Bot] Please select a language / 請選擇語言",
+                "contents": flex
             }])
             continue
 
-        # 处理文本消息
-        if etype == "message" and (event.get("message", {}).get("type") == "text"):
-            text = event["message"]["text"] or ""
+        # --- B) 文本消息 ---
+        elif etype == "message" and (event.get("message", {}) or {}).get("type") == "text":
+            text = (event.get("message", {}) or {}).get("text") or ""
 
-        # 兼容旧卡：postback 选择语言，也统一回英文单行
-        if etype == "postback":
-            data_pb = event.get("postback", {}).get("data", "")
-            if data_pb.startswith("lang="):
-                lang_code = data_pb.split("=", 1)[1]
-                cur.execute(
-                    "INSERT OR REPLACE INTO user_prefs (user_id, group_id, target_lang) VALUES (?, ?, ?)",
-                    (user_id, group_id, lang_code)
-                )
+            # B1) 重置指令
+            if is_reset_command(text):
+                cur.execute("DELETE FROM user_prefs WHERE group_id=?", (group_id,))
                 conn.commit()
-                ...
-            # B) 识别“语言按钮”（message 型）并保存 → 仅回英文单行确认
+                flex = build_language_selection_flex()
+                send_reply_message(reply_token, [{
+                    "type": "flex",
+                    "altText": "[Translator Bot] Please select a language / 請選擇語言",
+                    "contents": flex
+                }])
+                continue
+
+            # B2) 识别“语言按钮”（message 型）
             LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
             tnorm = text.strip().lower()
             if tnorm in LANG_CODES:
@@ -372,35 +378,28 @@ def line_webhook():
                     (user_id, group_id, lang_code)
                 )
                 conn.commit()
-                send_reply_message(reply_token, [{
-                    "type": "text", "text": f"✅ Your languages: {lang_code}"
-                }])
+                send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {lang_code}"}])
                 continue
 
-            # C) 非群聊直接忽略（sender 在 1:1 聊天不显示）
+            # B3) 非群聊忽略
             if not group_id:
                 continue
 
-            # D) 统计本群目标语言（**包含发送者本人**；修复“已设语言仍被提示未设置”）
-            cur.execute("SELECT user_id, target_lang FROM user_prefs WHERE group_id=?", (group_id,))
-            prefs = cur.fetchall()
-            targets = [lang for (_uid, lang) in prefs if lang]
-            # 去重并统一为小写，保留选择顺序
+            # B4) 收集本群目标语言
+            cur.execute("SELECT target_lang FROM user_prefs WHERE group_id=?", (group_id,))
+            targets = [row[0] for row in cur.fetchall() if row and row[0]]
             targets = list(dict.fromkeys([t.lower() for t in targets]))
             if not targets:
                 tip = "請先設定翻譯語言，輸入 /re /reset /resetlang 會出現語言卡片。\nSet your language with /re."
                 send_reply_message(reply_token, [{"type": "text", "text": tip}])
                 continue
 
-            # E) 翻译（先译第一个以取 detected_src，再用同源批量翻）
-            translations = []  # [(lang_code, translated_text)]
+            # B5) 翻译（先译第一个确定 detected_src，再批量）
+            translations = []
             first_lang = targets[0]
             result = translate_text(text, first_lang)
             if not result:
-                send_reply_message(reply_token, [{
-                    "type": "text",
-                    "text": "翻譯服務繁忙，請稍後再試 / Translation is busy, please retry."
-                }])
+                send_reply_message(reply_token, [{"type": "text", "text": "翻譯服務繁忙，請稍後再試 / Translation is busy, please retry."}])
                 continue
             first_txt, detected_src = result
             translations.append((first_lang, first_txt))
@@ -409,42 +408,33 @@ def line_webhook():
                 if r:
                     translations.append((tl, r[0]))
 
-            # F) 扣费：群池优先，否则走个人 5000
+            # B6) 扣费：群池优先，否则个人5000
             chars_used = len(text) * len(translations)
             cur.execute("SELECT plan_type, plan_remaining, plan_owner FROM groups WHERE group_id=?", (group_id,))
             group_plan = cur.fetchone()
             if group_plan:
-                ok = atomic_deduct_group_quota(group_id, chars_used)
-                if not ok:
-                    alert = ("翻譯额度已用盡，請升級套餐。\n"
-                             "Translation quota exhausted, please upgrade your plan.")
+                if not atomic_deduct_group_quota(group_id, chars_used):
+                    alert = "翻譯额度已用盡，請升級套餐。\nTranslation quota exhausted, please upgrade your plan."
                     send_reply_message(reply_token, [{"type": "text", "text": alert}])
                     continue
             else:
                 ok, _remain = atomic_deduct_user_free_quota(user_id, chars_used)
                 if not ok:
-                    alert = ("您的免費翻譯额度已用完，請升級套餐。\n"
-                             "Your free translation quota is used up. Please upgrade your plan.")
+                    alert = "您的免費翻譯额度已用完，請升級套餐。\nYour free translation quota is used up. Please upgrade your plan."
                     send_reply_message(reply_token, [{"type": "text", "text": alert}])
                     continue
 
-            # G) 使用“普通对话气泡”，每种语言单独一条；sender 控制名字与头像
+            # B7) 普通气泡输出；sender 控制头像/名称
             messages = []
             for lang_code, txt in translations:
-                sender = build_sender(user_id, group_id, lang_code)  # 好友=用户头像；未加好友=机器人头像
-                messages.append({
-                    "type": "text",
-                    "text": txt,     # 文本只放译文本身；语言代码体现在名字里：昵称 (en)
-                    "sender": sender
-                })
-
-            # 一次 reply 最多 5 条
+                sender = build_sender(user_id, group_id, lang_code)
+                messages.append({"type": "text", "text": txt, "sender": sender})
             if messages:
                 send_reply_message(reply_token, messages[:5])
 
-        # 兼容旧卡：postback 选择语言，也统一回英文单行
+        # --- C) 旧卡 postback：data=lang=xx ---
         elif etype == "postback":
-            data_pb = event.get("postback", {}).get("data", "")
+            data_pb = (event.get("postback", {}) or {}).get("data", "")
             if data_pb.startswith("lang="):
                 lang_code = data_pb.split("=", 1)[1]
                 cur.execute(
@@ -452,34 +442,9 @@ def line_webhook():
                     (user_id, group_id, lang_code)
                 )
                 conn.commit()
+                send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {lang_code}"}])
 
-                # 若该用户有套餐，尝试把本群绑定到他的套餐（受上限约束）
-                cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=?", (user_id,))
-                plan = cur.fetchone()
-                if plan:
-                    plan_type, max_groups = plan
-                    cur.execute("SELECT COUNT(*) FROM groups WHERE plan_owner=?", (user_id,))
-                    used = cur.fetchone()[0]
-                    if used < (max_groups or 0):
-                        cur.execute("SELECT 1 FROM groups WHERE group_id=?", (group_id,))
-                        exists = cur.fetchone()
-                        if not exists:
-                            quota = PLANS.get(plan_type, {}).get('quota', 0)
-                            cur.execute(
-                                "INSERT INTO groups (group_id, plan_type, plan_owner, plan_remaining) VALUES (?, ?, ?, ?)",
-                                (group_id, plan_type, user_id, quota)
-                            )
-                            conn.commit()
-                    else:
-                        alert = (f"當前套餐最多可用於{max_groups}個群組，請升級套餐。\n"
-                                 f"Current plan allows up to {max_groups} groups. Please upgrade for more.")
-                        send_reply_message(reply_token, [{"type": "text", "text": alert}])
-
-                # 统一英文确认
-                send_reply_message(reply_token, [{
-                    "type": "text", "text": f"✅ Your languages: {lang_code}"
-                }])
-
+    # 循环结束，统一返回
     return "OK"
 
 
