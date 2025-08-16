@@ -393,7 +393,7 @@ def line_webhook():
             if tnorm in LANG_CODES:
                 lang_code = tnorm
                 cur.execute(
-                    "INSERT OR REPLACE INTO user_prefs (user_id, group_id, target_lang) VALUES (?, ?, ?)",
+                    "INSERT OR IGNORE INTO user_prefs (user_id, group_id, target_lang) VALUES (?, ?, ?)",
                     (user_id, group_id, lang_code)
                 )
                 conn.commit()
@@ -457,7 +457,7 @@ def line_webhook():
             if data_pb.startswith("lang="):
                 lang_code = data_pb.split("=", 1)[1]
                 cur.execute(
-                    "INSERT OR REPLACE INTO user_prefs (user_id, group_id, target_lang) VALUES (?, ?, ?)",
+                    "INSERT OR IGNORE INTO user_prefs (user_id, group_id, target_lang) VALUES (?, ?, ?)",
                     (user_id, group_id, lang_code)
                 )
                 conn.commit()
