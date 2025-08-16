@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 import os
 import json
@@ -107,24 +108,12 @@ def send_push_text(to_id: str, text: str):
     body = {"to": to_id, "messages": [{"type": "text", "text": text}]}
     requests.post("https://api.line.me/v2/bot/message/push", headers=headers, data=json.dumps(body))
 
-dBOT_ICON_URL = "https://i.imgur.com/sTqykvy.png"
-
 def is_friend(user_id: str) -> bool:
-    """
-    判断用户是否已加好友（只有加了好友，才允许用 TA 的头像与名字来“代发”翻译）。
-    """
-    try:
-        r = requests.get(
-            f"https://api.line.me/v2/bot/friendship/status?userId={user_id}",
-            headers={"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"},
-            timeout=5
-        )
-        if r.status_code == 200:
-            return bool(r.json().get("friendFlag"))
-    except Exception:
-        pass
+    headers = {"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"}
+    r = requests.get(f"https://api.line.me/v2/bot/friendship/status?userId={user_id}", headers=headers, timeout=5)
+    if r.status_code == 200:
+        return bool(r.json().get("friendFlag"))
     return False
-
 
 def get_user_profile(user_id, group_id=None):
     """群内优先用 group member API；非好友时依然可获取，但头像是否展示由 is_friend 决定。"""
