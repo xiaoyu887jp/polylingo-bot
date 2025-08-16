@@ -351,17 +351,17 @@ def line_webhook():
         if etype == "message" and (event.get("message", {}).get("type") == "text"):
             text = event["message"]["text"] or ""
 
-            # A) 重置指令：清空本群语言偏好并再次发卡
-            if is_reset_command(text):
-                cur.execute("DELETE FROM user_prefs WHERE group_id=?", (group_id,))
+        # 兼容旧卡：postback 选择语言，也统一回英文单行
+        if etype == "postback":
+            data_pb = event.get("postback", {}).get("data", "")
+            if data_pb.startswith("lang="):
+                lang_code = data_pb.split("=", 1)[1]
+                cur.execute(
+                    "INSERT OR REPLACE INTO user_prefs (user_id, group_id, target_lang) VALUES (?, ?, ?)",
+                    (user_id, group_id, lang_code)
+                )
                 conn.commit()
-                flex = build_language_selection_flex()
-                alt_text = "[Translator Bot] Please select a language / 請選擇語言"
-                send_reply_message(reply_token, [{
-                    "type": "flex", "altText": alt_text, "contents": flex
-                }])
-                continue
-
+                ...
             # B) 识别“语言按钮”（message 型）并保存 → 仅回英文单行确认
             LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
             tnorm = text.strip().lower()
