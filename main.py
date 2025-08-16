@@ -316,7 +316,7 @@ app = Flask(__name__)
 
 # ---------------- LINE Webhook ----------------
 
-     # ---------------- LINE Webhook ----------------
+# ---------------- LINE Webhook ----------------
 @app.route("/callback", methods=["POST"])
 def line_webhook():
     # 校验 LINE 签名
@@ -381,18 +381,18 @@ def line_webhook():
             if not group_id:
                 continue
 
-            # D) 统计本群目标语言（**包含发送者本人**，修复“已设语言仍被提示未设置”）
+            # D) 统计本群目标语言（**包含发送者本人**；修复“已设语言仍被提示未设置”）
             cur.execute("SELECT user_id, target_lang FROM user_prefs WHERE group_id=?", (group_id,))
             prefs = cur.fetchall()
             targets = [lang for (_uid, lang) in prefs if lang]
-            # 去重并统一小写，顺序保留
+            # 去重并统一为小写，保留选择顺序
             targets = list(dict.fromkeys([t.lower() for t in targets]))
             if not targets:
                 tip = "請先設定翻譯語言，輸入 /re /reset /resetlang 會出現語言卡片。\nSet your language with /re."
                 send_reply_message(reply_token, [{"type": "text", "text": tip}])
                 continue
 
-            # E) 翻译（先用第一个语言翻译以获得 detected_src，再按同源批量翻）
+            # E) 翻译（先译第一个以取 detected_src，再用同源批量翻）
             translations = []  # [(lang_code, translated_text)]
             first_lang = targets[0]
             result = translate_text(text, first_lang)
