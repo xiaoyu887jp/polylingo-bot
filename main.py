@@ -328,7 +328,7 @@ def line_webhook():
         if signature != valid_signature:
             abort(400)
 
-    # 2) 解析事件并逐个处理
+     # 2) 解析事件并逐个处理（整段替换）
     data = json.loads(body) if body else {}
     for event in data.get("events", []):
         etype = event.get("type")
@@ -376,20 +376,25 @@ def line_webhook():
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {lang_code}"}])
                 continue
 
-            # B3) 非群聊忽略
+            # B3) 非群聊忽略（单聊不翻译）
             if not group_id:
                 continue
 
             # B4) 收集本群目标语言
             cur.execute("SELECT target_lang FROM user_prefs WHERE group_id=?", (group_id,))
             targets = [row[0] for row in cur.fetchall() if row and row[0]]
-            targets = list(dict.fromkeys([t.lower() for t in targets]))
+            targets = list(dict.fromkeys([t.lower() for t in targets]))  # 去重保序
             if not targets:
                 tip = "請先設定翻譯語言，輸入 /re /reset /resetlang 會出現語言卡片。\nSet your language with /re."
                 send_reply_message(reply_token, [{"type": "text", "text": tip}])
                 continue
 
-            # B5) 翻译（先译第一个确定 detected_src，再并发批量）
+            # —— 一次性获取头像/昵称（后面复用，不要在循环里重复查）——
+            profile = get_user_profile(user_id, group_id) or {}
+            icon = profile.get("pictureUrl") or BOT_AVATAR_FALLBACK
+            display_name = (profile.get("displayName") or "User")[:20]
+
+            # B5) 翻译（先译第一个确定 detected_src，再并发其余）
             translations = []
             first_lang = targets[0]
             result = translate_text(text, first_lang)
@@ -400,7 +405,12 @@ def line_webhook():
                 }])
                 continue
 
-            first_txt, detected_src = result
+            # 兼容 translate_text 返回 (txt, detected_src) 或仅返回 txt 的两种实现
+            if isinstance(result, tuple):
+                first_txt, detected_src = result
+            else:
+                first_txt, detected_src = result, 'auto'
+
             translations.append((first_lang, first_txt))
 
             others = targets[1:]
@@ -410,10 +420,13 @@ def line_webhook():
                     for tl in others:
                         r = futs[tl].result()
                         if r:
-                            translations.append((tl, r[0]))
+                            if isinstance(r, tuple):
+                                translations.append((tl, r[0]))
+                            else:
+                                translations.append((tl, r))
 
-            # B6) 扣费：群池优先，否则个人5000
-            chars_used = len(text) * len(translations)
+            # B6) 扣费：群池优先，否则个人5000（按语种数计费）
+            chars_used = len(text) * max(1, len(translations))
             cur.execute("SELECT plan_type, plan_remaining, plan_owner FROM groups WHERE group_id=?", (group_id,))
             group_plan = cur.fetchone()
             if group_plan:
@@ -428,13 +441,17 @@ def line_webhook():
                     send_reply_message(reply_token, [{"type": "text", "text": alert}])
                     continue
 
-            # B7) 发送：每个目标语言一个消息气泡（带用户头像/名字）
+            # B7) 发送：每个目标语言一个消息气泡（一次性回复）
             messages = []
             for lang_code, txt in translations:
-                sender = build_sender(user_id, group_id, lang_code)
-                messages.append({"type": "text", "text": txt, "sender": sender})
+                # 这里复用一次性获取到的头像/名字，避免重复请求
+                messages.append({
+                    "type": "text",
+                    "text": txt,
+                    "sender": {"name": f"{display_name} ({lang_code})", "iconUrl": icon}
+                })
             if messages:
-                send_reply_message(reply_token, messages[:5])  # 防超限
+                send_reply_message(reply_token, messages[:5])  # 防超限（LINE 每次最多 5 条）
 
         # --- C) 旧卡 postback：data=lang=xx ---
         elif etype == "postback":
