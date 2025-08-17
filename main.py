@@ -230,7 +230,7 @@ def translate_text(text, target_lang, source_lang=None):
     url = ("https://translate.googleapis.com/translate_a/single?client=gtx&dt=t"
            f"&sl={sl}&tl={target_lang}&q=" + requests.utils.requote_uri(text))
     try:
-        resp = HTTP.get(url, timeout=8)
+        resp = HTTP.get(url, timeout=6)
         if resp.status_code != 200:
             return None
         data = resp.json()
@@ -416,7 +416,7 @@ def line_webhook():
             if others:
                 # 如未全局 import，可解开下一行的局部导入
                 # from concurrent.futures import ThreadPoolExecutor
-                with ThreadPoolExecutor(max_workers=min(4, len(others))) as pool:
+                with ThreadPoolExecutor(max_workers=min(6, len(others))) as pool:
                     futs = {tl: pool.submit(translate_text, text, tl, detected_src) for tl in others}
                     for tl in others:
                         r = futs[tl].result()
