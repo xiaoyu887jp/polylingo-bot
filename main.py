@@ -1,13 +1,19 @@
 
 # -*- coding: utf-8 -*-
-import os, json, time, sqlite3, hmac, hashlib, base64
-import requests
-from flask import Flask, request, abort
+import requests, os
+from requests.adapters import HTTPAdapter
+from flask import Flask, request, jsonify, abort
+from linebot import LineBotApi
+...
+
+# 复用 HTTP 连接，减少 TLS 握手与排队 ✅
+HTTP = requests.Session()
+HTTP.headers.update({"Connection": "keep-alive"})
+HTTP.mount("https://", HTTPAdapter(pool_connections=20, pool_maxsize=20))
+HTTP.mount("http://",  HTTPAdapter(pool_connections=10, pool_maxsize=10))
+
 
 from concurrent.futures import ThreadPoolExecutor
-
-# 复用连接，减少握手耗时
-HTTP = requests.Session()
 
 # ===================== 配置 =====================
 LINE_CHANNEL_ACCESS_TOKEN = (
