@@ -328,7 +328,7 @@ def line_webhook():
         if signature != valid_signature:
             abort(400)
 
-     # 2) 解析事件并逐个处理（整段替换）
+    # 2) 解析事件并逐个处理（整段替换）
     data = json.loads(body) if body else {}
     for event in data.get("events", []):
         etype = event.get("type")
@@ -410,11 +410,12 @@ def line_webhook():
                 first_txt, detected_src = result
             else:
                 first_txt, detected_src = result, 'auto'
-
             translations.append((first_lang, first_txt))
 
             others = targets[1:]
             if others:
+                # 如未全局 import，可解开下一行的局部导入
+                # from concurrent.futures import ThreadPoolExecutor
                 with ThreadPoolExecutor(max_workers=min(4, len(others))) as pool:
                     futs = {tl: pool.submit(translate_text, text, tl, detected_src) for tl in others}
                     for tl in others:
@@ -444,7 +445,7 @@ def line_webhook():
             # B7) 发送：每个目标语言一个消息气泡（一次性回复）
             messages = []
             for lang_code, txt in translations:
-                # 这里复用一次性获取到的头像/名字，避免重复请求
+                # 复用一次性获取到的头像/名字，避免重复请求
                 messages.append({
                     "type": "text",
                     "text": txt,
