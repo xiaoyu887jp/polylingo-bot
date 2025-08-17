@@ -1,5 +1,6 @@
 
 # -*- coding: utf-8 -*-
+import sqlite3
 import requests, os
 from requests.adapters import HTTPAdapter
 from flask import Flask, request, jsonify, abort
