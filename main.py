@@ -1,27 +1,35 @@
 # -*- coding: utf-8 -*-
-import sqlite3
-import requests, os
+import os
+import time
 import json
-import hmac, hashlib, base64
+import hmac
+import base64
+import hashlib
+import logging
+import sqlite3
+import requests
+from typing import Optional
+from flask import Flask, request, abort
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from flask import Flask, request, jsonify, abort
-from linebot import LineBotApi
 from concurrent.futures import ThreadPoolExecutor
-import logging
+from linebot import LineBotApi
 
 # ===================== HTTP 会话池 =====================
 HTTP = requests.Session()
 HTTP.headers.update({"Connection": "keep-alive"})
 retry = Retry(
-    total=3, connect=3, read=3,
+    total=3,
+    connect=3,
+    read=3,
     backoff_factor=0.3,
     status_forcelist=[429, 500, 502, 503, 504],
-    allowed_methods=["GET", "POST"],
+    allowed_methods=frozenset(["GET", "POST"]),
     raise_on_status=False,
 )
-HTTP.mount("https://", HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=retry))
-HTTP.mount("http://",  HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=retry))
+# 加大连接池，避免并发排队
+HTTP.mount("https://", HTTPAdapter(pool_connections=50, pool_maxsize=100, max_retries=retry))
+HTTP.mount("http://",  HTTPAdapter(pool_connections=25, pool_maxsize=50,  max_retries=retry))
 
 # ===================== 配置 =====================
 LINE_CHANNEL_ACCESS_TOKEN = (
@@ -35,7 +43,6 @@ LINE_CHANNEL_SECRET = (
     or "<LINE_CHANNEL_SECRET>"
 )
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "<STRIPE_WEBHOOK_SECRET>")
-
 BOT_AVATAR_FALLBACK = "https://i.imgur.com/sTqykvy.png"
 
 # 计划与额度
@@ -121,7 +128,7 @@ CREATE TABLE IF NOT EXISTS user_plans (
     subscription_id TEXT
 )""")
 
-# 简单的翻译缓存（可选）
+# 简单的翻译缓存（可选；当前仅使用内存缓存，避免并发写锁）
 cur.execute("""
 CREATE TABLE IF NOT EXISTS translations_cache (
     text TEXT,
@@ -214,6 +221,20 @@ def get_user_profile(user_id, group_id=None):
         pass
     return {}
 
+# 头像/昵称 5 分钟内存缓存，减少外部请求
+PROFILE_CACHE = {}
+PROFILE_TTL = 300  # 秒
+
+def get_user_profile_cached(user_id, group_id=None):
+    key = (user_id or "", group_id or "")
+    now = time.time()
+    hit = PROFILE_CACHE.get(key)
+    if hit and now - hit[0] < PROFILE_TTL:
+        return hit[1]
+    prof = get_user_profile(user_id, group_id) or {}
+    PROFILE_CACHE[key] = (now, prof)
+    return prof
+
 def build_language_selection_flex():
     # 简洁双列按钮卡
     def card(label, code, bg):
@@ -274,14 +295,7 @@ def translate_text(text, target_lang, source_lang=None):
     translated_text = "".join(segs)
     detected_source = source_lang or (data[2] if len(data) > 2 else '')
     translation_cache[cache_key] = translated_text
-    try:
-        cur.execute("""INSERT OR IGNORE INTO translations_cache
-                       (text, source_lang, target_lang, translated)
-                       VALUES (?, ?, ?, ?)""",
-                    (text, detected_source, target_lang, translated_text))
-        conn.commit()
-    except Exception:
-        pass
+    # ⚡️性能：避免在线程内写 SQLite，减少锁等待（如需持久缓存，可改为单线程批量写）
     return translated_text, detected_source
 
 # -------- 原子扣减：群池 --------
@@ -331,8 +345,8 @@ def atomic_deduct_user_free_quota(user_id: str, amount: int):
         return (False, 0)
 
 # -------- sender 构造（名字 + 头像）--------
-def build_sender(user_id: str, group_id: str | None, lang_code: str | None):
-    profile = get_user_profile(user_id, group_id) if user_id else {}
+def build_sender(user_id: str, group_id: Optional[str], lang_code: Optional[str]):
+    profile = get_user_profile_cached(user_id, group_id) if user_id else {}
     name = (profile.get("displayName") or "User")
     if lang_code:
         name = f"{name} ({lang_code})"
@@ -424,9 +438,7 @@ def line_webhook():
                     "SELECT target_lang FROM user_prefs WHERE user_id=? AND group_id=?",
                     (user_id, group_id)
                 )
-                my_langs = [r[0] for r in cur.fetchall()]
-                if not my_langs:
-                    my_langs = [lang_code]
+                my_langs = [r[0] for r in cur.fetchall()] or [lang_code]
                 send_reply_message(
                     reply_token,
                     [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}]
@@ -451,38 +463,24 @@ def line_webhook():
                 continue
 
             # —— 一次性获取头像/昵称（后面复用，不要在循环里重复查）——
-            profile = get_user_profile(user_id, group_id) or {}
+            profile = get_user_profile_cached(user_id, group_id) or {}
             icon = profile.get("pictureUrl") or BOT_AVATAR_FALLBACK
             display_name = (profile.get("displayName") or "User")[:20]
 
-            # B5) 翻译（先译第一个确定 detected_src，再并发其余）
+            # B5) 翻译（全部并发，sl=auto） + 计时日志
+            t0 = time.perf_counter()
             translations = []
-            first_lang = targets[0]
-            result = translate_text(text, first_lang)
-            if not result:
-                send_reply_message(reply_token, [{
-                    "type": "text",
-                    "text": "翻譯服務繁忙，請稍後再試 / Translation is busy, please retry."
-                }])
-                continue
-
-            if isinstance(result, tuple):
-                first_txt, detected_src = result
-            else:
-                first_txt, detected_src = result, 'auto'
-            translations.append((first_lang, first_txt))
-
-            others = targets[1:]
-            if others:
-                with ThreadPoolExecutor(max_workers=min(6, len(others))) as pool:
-                    futs = {tl: pool.submit(translate_text, text, tl, detected_src) for tl in others}
-                    for tl in others:
-                        r = futs[tl].result()
-                        if r:
-                            if isinstance(r, tuple):
-                                translations.append((tl, r[0]))
-                            else:
-                                translations.append((tl, r))
+            with ThreadPoolExecutor(max_workers=min(8, len(targets))) as pool:
+                futs = {tl: pool.submit(translate_text, text, tl, None) for tl in targets}
+                for tl, fut in futs.items():
+                    r = fut.result()
+                    if r:
+                        if isinstance(r, tuple):
+                            txt, _ = r
+                        else:
+                            txt = r
+                        translations.append((tl, txt))
+            logging.info(f"[translate] langs={len(targets)} elapsed_ms={(time.perf_counter()-t0)*1000:.1f}")
 
             # B6) 扣费：群池优先，否则个人5000（按语种数计费）
             chars_used = len(text) * max(1, len(translations))
@@ -643,4 +641,6 @@ def stripe_webhook():
 
 # ---------------- 启动 ----------------
 if __name__ == "__main__":
+    # 生产环境建议在 Render 的 Start Command 使用：
+    # gunicorn -w 2 -k gthread --threads 8 -t 60 -b 0.0.0.0:$PORT main:app
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
