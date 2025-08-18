@@ -1,20 +1,30 @@
 
 # -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import sqlite3
 import requests, os
-import json 
-import hmac, hashlib, base64  
+import json
+import hmac, hashlib, base64
 from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry    # ← 新增
 from flask import Flask, request, jsonify, abort
 from linebot import LineBotApi
-...
+from concurrent.futures import ThreadPoolExecutor
+import logging
 
-# 复用 HTTP 连接，减少 TLS 握手与排队 ✅
+# 初始化 HTTP 会话池
 HTTP = requests.Session()
 HTTP.headers.update({"Connection": "keep-alive"})
-HTTP.mount("https://", HTTPAdapter(pool_connections=20, pool_maxsize=20))
-HTTP.mount("http://",  HTTPAdapter(pool_connections=10, pool_maxsize=10))
 
+retry = Retry(
+    total=3, connect=3, read=3,
+    backoff_factor=0.3,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET", "POST"],
+    raise_on_status=False,
+)
+HTTP.mount("https://", HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=retry))
+HTTP.mount("http://",  HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=retry))
 
 from concurrent.futures import ThreadPoolExecutor
 
