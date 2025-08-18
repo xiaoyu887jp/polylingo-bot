@@ -4,16 +4,15 @@ import requests, os
 import json
 import hmac, hashlib, base64
 from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry    # ← 新增
+from urllib3.util.retry import Retry
 from flask import Flask, request, jsonify, abort
 from linebot import LineBotApi
 from concurrent.futures import ThreadPoolExecutor
 import logging
 
-# 初始化 HTTP 会话池
+# ===================== HTTP 会话池 =====================
 HTTP = requests.Session()
 HTTP.headers.update({"Connection": "keep-alive"})
-
 retry = Retry(
     total=3, connect=3, read=3,
     backoff_factor=0.3,
@@ -24,17 +23,15 @@ retry = Retry(
 HTTP.mount("https://", HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=retry))
 HTTP.mount("http://",  HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=retry))
 
-from concurrent.futures import ThreadPoolExecutor
-
 # ===================== 配置 =====================
 LINE_CHANNEL_ACCESS_TOKEN = (
-    os.getenv("LINE_ACCESS_TOKEN")  # 推荐的变量名
-    or os.getenv("LINE_CHANNEL_ACCESS_TOKEN")  # 兼容旧名
+    os.getenv("LINE_ACCESS_TOKEN")
+    or os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
     or "<LINE_CHANNEL_ACCESS_TOKEN>"
 )
 LINE_CHANNEL_SECRET = (
     os.getenv("LINE_CHANNEL_SECRET")
-    or os.getenv("LINE_SECRET")  # 兼容旧名
+    or os.getenv("LINE_SECRET")
     or "<LINE_CHANNEL_SECRET>"
 )
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "<STRIPE_WEBHOOK_SECRET>")
@@ -139,7 +136,8 @@ translation_cache = {}  # (text, sl, tl) -> translated
 
 # ===================== 工具函数 =====================
 def first_token(s: str) -> str:
-    if not s: return ""
+    if not s:
+        return ""
     t = s.strip().lower().replace('\u3000', ' ')
     parts = t.split()
     return parts[0] if parts else ""
@@ -186,7 +184,6 @@ def send_push_text(to_id: str, text: str):
         )
     except requests.RequestException as e:
         logging.warning(f"[push] failed: {e}")
-
 
 def is_friend(user_id: str):
     """返回 True/False；接口不可用（403等）时返回 None"""
@@ -340,11 +337,8 @@ def build_sender(user_id: str, group_id: str | None, lang_code: str | None):
     if lang_code:
         name = f"{name} ({lang_code})"
     name = name[:20]
-
-    # 总是优先用用户头像（拿不到再用备用图）
     icon = profile.get("pictureUrl") or BOT_AVATAR_FALLBACK
     return {"name": name, "iconUrl": icon}
-
 
 # ===================== Flask 应用 =====================
 app = Flask(__name__)
@@ -365,7 +359,7 @@ def line_webhook():
         if signature != valid_signature:
             abort(400)
 
-    # 2) 解析事件并逐个处理（整段替换）
+    # 2) 解析事件并逐个处理
     data = json.loads(body) if body else {}
     for event in data.get("events", []):
         etype = event.get("type")
@@ -375,10 +369,21 @@ def line_webhook():
         reply_token = event.get("replyToken")
 
         # --- A) 进群：发送语言选择卡 ---
-        if etype in ("join", "memberJoined"):
+        if etype == "join":
+            # 只有机器人被拉入群时，清理旧数据
             if group_id:
                 cur.execute("DELETE FROM user_prefs WHERE group_id=?", (group_id,))
                 conn.commit()
+            flex = build_language_selection_flex()
+            send_reply_message(reply_token, [{
+                "type": "flex",
+                "altText": "[Translator Bot] Please select a language / 請選擇語言",
+                "contents": flex
+            }])
+            continue
+
+        elif etype == "memberJoined":
+            # 普通成员加入：只发卡，不清空全群设定
             flex = build_language_selection_flex()
             send_reply_message(reply_token, [{
                 "type": "flex",
@@ -391,7 +396,7 @@ def line_webhook():
         elif etype == "message" and (event.get("message", {}) or {}).get("type") == "text":
             text = (event.get("message", {}) or {}).get("text") or ""
 
-            # B1) 重置指令
+            # B1) 重置指令（清掉本群所有人的设定，并重新发语言卡）
             if is_reset_command(text):
                 cur.execute("DELETE FROM user_prefs WHERE group_id=?", (group_id,))
                 conn.commit()
@@ -403,10 +408,10 @@ def line_webhook():
                 }])
                 continue
 
-            # B2) 识别“语言按钮”（message 型）
+            # B2) 识别“语言按钮”（message 型）——只更新并回显“发言者在本群的语言”
             LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
             tnorm = text.strip().lower()
-           if tnorm in LANG_CODES:
+            if tnorm in LANG_CODES:
                 lang_code = tnorm
                 cur.execute(
                     "INSERT OR IGNORE INTO user_prefs (user_id, group_id, target_lang) VALUES (?, ?, ?)",
@@ -414,7 +419,7 @@ def line_webhook():
                 )
                 conn.commit()
 
-                # 仅回显“该用户在本群的全部已选语言”
+                # 回显“该用户在本群的全部已选语言”
                 cur.execute(
                     "SELECT target_lang FROM user_prefs WHERE user_id=? AND group_id=?",
                     (user_id, group_id)
@@ -432,18 +437,16 @@ def line_webhook():
             if not group_id:
                 continue
 
-            # B4) 收集本群目标语言
+            # B4) 只收集“发言者自己的目标语言”
             cur.execute(
                 "SELECT target_lang FROM user_prefs WHERE group_id=? AND user_id=?",
                 (group_id, user_id)
             )
             targets = [row[0].lower() for row in cur.fetchall() if row and row[0]]
             targets = list(dict.fromkeys(targets))  # 去重保序
-
             if not targets:
                 tip = ("請先為【你自己】設定翻譯語言，輸入 /re /reset /resetlang 會出現語言卡片。\n"
                        "Set your language with /re.")
-
                 send_reply_message(reply_token, [{"type": "text", "text": tip}])
                 continue
 
@@ -463,7 +466,6 @@ def line_webhook():
                 }])
                 continue
 
-            # 兼容 translate_text 返回 (txt, detected_src) 或仅返回 txt 的两种实现
             if isinstance(result, tuple):
                 first_txt, detected_src = result
             else:
@@ -472,8 +474,6 @@ def line_webhook():
 
             others = targets[1:]
             if others:
-                # 如未全局 import，可解开下一行的局部导入
-                # from concurrent.futures import ThreadPoolExecutor
                 with ThreadPoolExecutor(max_workers=min(6, len(others))) as pool:
                     futs = {tl: pool.submit(translate_text, text, tl, detected_src) for tl in others}
                     for tl in others:
@@ -503,14 +503,13 @@ def line_webhook():
             # B7) 发送：每个目标语言一个消息气泡（一次性回复）
             messages = []
             for lang_code, txt in translations:
-                # 复用一次性获取到的头像/名字，避免重复请求
                 messages.append({
                     "type": "text",
                     "text": txt,
                     "sender": {"name": f"{display_name} ({lang_code})", "iconUrl": icon}
                 })
             if messages:
-                send_reply_message(reply_token, messages[:5])  # 防超限（LINE 每次最多 5 条）
+                send_reply_message(reply_token, messages[:5])  # LINE 每次最多 5 条
 
         # --- C) 旧卡 postback：data=lang=xx ---
         elif etype == "postback":
@@ -545,8 +544,13 @@ def line_webhook():
                                  f"Current plan allows up to {max_groups} groups. Please upgrade for more.")
                         send_reply_message(reply_token, [{"type": "text", "text": alert}])
 
-                # 确认
-                send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {lang_code}"}])
+                # 回显：该用户在本群的全部语言
+                cur.execute(
+                    "SELECT target_lang FROM user_prefs WHERE user_id=? AND group_id=?",
+                    (user_id, group_id)
+                )
+                my_langs = [r[0] for r in cur.fetchall()] or [lang_code]
+                send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}])
 
     return "OK"
 
@@ -562,8 +566,10 @@ def stripe_webhook():
             timestamp, signature = None, None
             for part in sig_header.split(","):
                 k, v = part.split("=", 1)
-                if k == "t":  timestamp = v
-                elif k == "v1": signature = v
+                if k == "t":
+                    timestamp = v
+                elif k == "v1":
+                    signature = v
             signed_payload = f"{timestamp}.{payload.decode('utf-8')}"
             expected = hmac.new(STRIPE_WEBHOOK_SECRET.encode('utf-8'),
                                 signed_payload.encode('utf-8'), hashlib.sha256).hexdigest()
