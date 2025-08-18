@@ -1,5 +1,3 @@
-
-# -*- coding: utf-8 -*-
 # -*- coding: utf-8 -*-
 import sqlite3
 import requests, os
@@ -377,7 +375,10 @@ def line_webhook():
         reply_token = event.get("replyToken")
 
         # --- A) 进群：发送语言选择卡 ---
-        if etype == "join":
+        if etype in ("join", "memberJoined"):
+            if group_id:
+                cur.execute("DELETE FROM user_prefs WHERE group_id=?", (group_id,))
+                conn.commit()
             flex = build_language_selection_flex()
             send_reply_message(reply_token, [{
                 "type": "flex",
