@@ -174,10 +174,21 @@ def send_reply_message(reply_token, messages):
             logging.error(f"[reply] failed after retry: {e2}")
 
 def send_push_text(to_id: str, text: str):
-    headers = {"Content-Type": "application/json",
-               "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"}
+    headers = {
+        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
     body = {"to": to_id, "messages": [{"type": "text", "text": text}]}
-    HTTP.post("https://api.line.me/v2/bot/message/push", headers=headers, data=json.dumps(body), timeout=10)
+    try:
+        HTTP.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers=headers,
+            json=body,
+            timeout=5,
+        )
+    except requests.RequestException as e:
+        logging.warning(f"[push] failed: {e}")
+
 
 def is_friend(user_id: str):
     """返回 True/False；接口不可用（403等）时返回 None"""
