@@ -150,10 +150,28 @@ def is_reset_command(s: str) -> bool:
     return first_token(s) in RESET_ALIASES
 
 def send_reply_message(reply_token, messages):
-    headers = {"Content-Type": "application/json",
-               "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"}
-    body = {"replyToken": reply_token, "messages": messages}
-    HTTP.post("https://api.line.me/v2/bot/message/reply", headers=headers, data=json.dumps(body), timeout=10)
+    headers = {
+        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    try:
+        HTTP.post(
+            "https://api.line.me/v2/bot/message/reply",
+            headers=headers,
+            json={"replyToken": reply_token, "messages": messages},
+            timeout=5,
+        )
+    except requests.RequestException as e:
+        logging.warning(f"[reply] first attempt failed: {e}, retrying once...")
+        try:
+            HTTP.post(
+                "https://api.line.me/v2/bot/message/reply",
+                headers=headers,
+                json={"replyToken": reply_token, "messages": messages},
+                timeout=5,
+            )
+        except Exception as e2:
+            logging.error(f"[reply] failed after retry: {e2}")
 
 def send_push_text(to_id: str, text: str):
     headers = {"Content-Type": "application/json",
