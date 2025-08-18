@@ -406,14 +406,26 @@ def line_webhook():
             # B2) 识别“语言按钮”（message 型）
             LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
             tnorm = text.strip().lower()
-            if tnorm in LANG_CODES:
+           if tnorm in LANG_CODES:
                 lang_code = tnorm
                 cur.execute(
                     "INSERT OR IGNORE INTO user_prefs (user_id, group_id, target_lang) VALUES (?, ?, ?)",
                     (user_id, group_id, lang_code)
                 )
                 conn.commit()
-                send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {lang_code}"}])
+
+                # 仅回显“该用户在本群的全部已选语言”
+                cur.execute(
+                    "SELECT target_lang FROM user_prefs WHERE user_id=? AND group_id=?",
+                    (user_id, group_id)
+                )
+                my_langs = [r[0] for r in cur.fetchall()]
+                if not my_langs:
+                    my_langs = [lang_code]
+                send_reply_message(
+                    reply_token,
+                    [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}]
+                )
                 continue
 
             # B3) 非群聊忽略（单聊不翻译）
@@ -421,11 +433,17 @@ def line_webhook():
                 continue
 
             # B4) 收集本群目标语言
-            cur.execute("SELECT target_lang FROM user_prefs WHERE group_id=?", (group_id,))
-            targets = [row[0] for row in cur.fetchall() if row and row[0]]
-            targets = list(dict.fromkeys([t.lower() for t in targets]))  # 去重保序
+            cur.execute(
+                "SELECT target_lang FROM user_prefs WHERE group_id=? AND user_id=?",
+                (group_id, user_id)
+            )
+            targets = [row[0].lower() for row in cur.fetchall() if row and row[0]]
+            targets = list(dict.fromkeys(targets))  # 去重保序
+
             if not targets:
-                tip = "請先設定翻譯語言，輸入 /re /reset /resetlang 會出現語言卡片。\nSet your language with /re."
+                tip = ("請先為【你自己】設定翻譯語言，輸入 /re /reset /resetlang 會出現語言卡片。\n"
+                       "Set your language with /re.")
+
                 send_reply_message(reply_token, [{"type": "text", "text": tip}])
                 continue
 
