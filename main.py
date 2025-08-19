@@ -267,31 +267,51 @@ def build_language_selection_flex():
                                    "weight":"bold","size":"lg","align":"center","color":"#1F2937"}]},
             "body":{"type":"box","layout":"vertical","spacing":"12px","contents":rows+[footer]}}
 
-# ===== 翻译：官方 Google v2（老程序的快通道），仅用内存缓存 =====
 def translate_text(text: str, target_lang: str, source_lang: Optional[str] = None):
     """
-    使用官方 Google Translate v2 API；返回 (translated_text, sl_hint/auto) 或 None
+    使用官方 Google Translate v2，严格保留原文的换行格式。
+    - 多行：按行数组提交，一次请求拿回逐行结果，再用 '\n' 拼回
+    - 单行：走快路径
+    返回: (translated_text, sl_hint/auto) 或 None
     """
     if not GOOGLE_API_KEY:
         return None
+
     sl = source_lang or "auto"
-    cache_key = (text, sl, target_lang)
+
+    # 统一换行，便于缓存与切分
+    text_norm = text.replace("\r\n", "\n").replace("\r", "\n")
+    cache_key = (text_norm, sl, target_lang)
     hit = translation_cache.get(cache_key)
     if hit:
         return hit, sl
 
     url = f"https://translation.googleapis.com/language/translate/v2?key={GOOGLE_API_KEY}"
-    payload = {"q": text, "target": target_lang}
-    if source_lang:
-        payload["source"] = source_lang  # 提示源语种，减少检测延迟
 
     try:
-        resp = HTTP.post(url, json=payload, timeout=4)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        translated = data["data"]["translations"][0]["translatedText"]
-        translated = html.unescape(translated)  # 去实体
+        if "\n" in text_norm:
+            # 多行：逐行对应
+            lines = text_norm.split("\n")  # 保留空行
+            payload = {"q": lines, "target": target_lang, "format": "text"}
+            if source_lang:
+                payload["source"] = source_lang
+            resp = HTTP.post(url, json=payload, timeout=4)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            trans_list = data["data"]["translations"]
+            translated_lines = [html.unescape(item.get("translatedText", "")) for item in trans_list]
+            translated = "\n".join(translated_lines)
+        else:
+            # 单行快路径
+            payload = {"q": text_norm, "target": target_lang, "format": "text"}
+            if source_lang:
+                payload["source"] = source_lang
+            resp = HTTP.post(url, json=payload, timeout=4)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            translated = html.unescape(data["data"]["translations"][0]["translatedText"])
     except Exception:
         return None
 
