@@ -519,15 +519,20 @@ def line_webhook():
             if group_plan:
                 if not atomic_deduct_group_quota(group_id, chars_used):
                     alert = build_group_quota_alert(user_id)
-
-                   
-                    send_reply_message(reply_token, [{"type": "text", "text": alert}])
+                    send_reply_message(reply_token, [
+                        {"type": "text", "text": alert},
+                        {"type": "text", "text": build_buy_link(user_id)}  # 只有URL，最稳触发预览
+                    ])
                     continue
+                 
             else:
                 ok, _remain = atomic_deduct_user_free_quota(user_id, chars_used)
                 if not ok:
                     alert = build_free_quota_alert(user_id)  # 含购买链接 & line_id
-                    send_reply_message(reply_token, [{"type": "text", "text": alert}])
+                    send_reply_message(reply_token, [
+                        {"type": "text", "text": alert},
+                        {"type": "text", "text": build_buy_link(user_id)}  # 单独 URL 一条，更稳触发网页预览
+                    ])
                     continue
 
             # B7) 发送（沿用你“用个人头像”的体验）
