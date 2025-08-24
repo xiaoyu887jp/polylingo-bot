@@ -42,6 +42,29 @@ LINE_CHANNEL_SECRET = (
     or os.getenv("LINE_SECRET")
     or "<LINE_CHANNEL_SECRET>"
 )
+# ===================== 购买链接 =====================
+BUY_URL_BASE = "https://saygo-translator.carrd.co"
+
+def build_buy_link(user_id: str) -> str:
+    # 带上 line_id，便于网页识别/后续对接
+    return f"{BUY_URL_BASE}?line_id={user_id}"
+
+def build_free_quota_alert(user_id: str) -> str:
+    url = build_buy_link(user_id)
+    return (
+        "⚠️ 您的免費翻譯额度已用完，請升級套餐。\n"
+        "Your free translation quota is used up. Please upgrade your plan.\n"
+        f"{url}"
+    )
+
+def build_group_quota_alert(user_id: str) -> str:
+    url = build_buy_link(user_id)
+    return (
+        "⚠️ 本群翻譯额度已用盡，請升級套餐或新增群可用额度。\n"
+        "Translation quota for this group is exhausted. Please upgrade your plan.\n"
+        f"{url}"
+    )
+
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "<STRIPE_WEBHOOK_SECRET>")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")  # ✅ 官方翻译 API key 仅从环境读取
 
@@ -495,13 +518,15 @@ def line_webhook():
             group_plan = cur.fetchone()
             if group_plan:
                 if not atomic_deduct_group_quota(group_id, chars_used):
-                    alert = "翻譯额度已用盡，請升級套餐。\nTranslation quota exhausted, please upgrade your plan."
+                    alert = build_group_quota_alert(user_id)
+
+                   
                     send_reply_message(reply_token, [{"type": "text", "text": alert}])
                     continue
             else:
                 ok, _remain = atomic_deduct_user_free_quota(user_id, chars_used)
                 if not ok:
-                    alert = "您的免費翻譯额度已用完，請升級套餐。\nYour free translation quota is used up. Please upgrade your plan."
+                    alert = build_free_quota_alert(user_id)  # 含购买链接 & line_id
                     send_reply_message(reply_token, [{"type": "text", "text": alert}])
                     continue
 
