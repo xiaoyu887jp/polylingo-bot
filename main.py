@@ -89,10 +89,34 @@ PLANS = {
 RESET_ALIASES = {"/re", "/reset", "/resetlang"}
 
 # ===================== DB 初始化（沿用新程序结构） =====================
-conn = sqlite3.connect('bot.db', check_same_thread=False, isolation_level=None)
-conn.execute("PRAGMA journal_mode=WAL;")
-conn.execute("PRAGMA busy_timeout=5000;")
+import os, shutil, logging
+
+# ===== SQLite 持久化到 Render 磁盘 =====
+DEFAULT_DB = "bot.db"                          # 旧位置（容器临时盘）
+DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")  # 新位置（持久磁盘）
+
+# 确保目录存在
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
+# 一次性迁移：若新路径不存在、但旧 DB 存在，则拷贝过去（仅首轮有效）
+try:
+    if DB_PATH != DEFAULT_DB and (not os.path.exists(DB_PATH)) and os.path.exists(DEFAULT_DB):
+        shutil.copyfile(DEFAULT_DB, DB_PATH)
+except Exception as e:
+    logging.warning(f"DB migrate copy failed: {e}")
+
+# 连接持久化 DB
+conn = sqlite3.connect(DB_PATH, check_same_thread=False, isolation_level=None)
 cur = conn.cursor()
+logging.info(f"Using DB at {DB_PATH} (exists={os.path.exists(DB_PATH)})")
+
+# （推荐）提高稳定性/并发的 SQLite 参数
+try:
+    cur.execute("PRAGMA journal_mode=WAL;")
+    cur.execute("PRAGMA synchronous=NORMAL;")
+    cur.execute("PRAGMA busy_timeout=5000;")
+except Exception as e:
+    logging.warning(f"PRAGMA set failed: {e}")
 
 # users：个人免费额度（默认5000）
 cur.execute("""
