@@ -453,12 +453,7 @@ def line_webhook():
 
         # 新成员加入：只发卡，不清空全群
         if etype == "memberJoined":
-            flex = build_language_selection_flex()
-            send_reply_message(reply_token, [{
-                "type": "flex",
-                "altText": "[Translator Bot] Please select a language / 請選擇語言",
-                "contents": flex
-            }])
+           
             continue
 
         # B) 文本消息
