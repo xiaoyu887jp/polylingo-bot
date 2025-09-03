@@ -492,6 +492,7 @@ def line_webhook():
                     # 已绑定的群数（必须按 owner_id 过滤）
                     cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,))
                     used = cur.fetchone()[0] or 0
+                   
 
                     # 该群是否已存在
                     cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=?", (group_id,))
@@ -628,16 +629,17 @@ def line_webhook():
                 plan = cur.fetchone()
                 if plan:
                     plan_type, max_groups = plan
-                    cur.execute("SELECT COUNT(*) FROM groups WHERE plan_owner=?", (user_id,))
+                    cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,))
+
                     used = cur.fetchone()[0]
                     if used < (max_groups or 0):
-                        cur.execute("SELECT 1 FROM groups WHERE group_id=?", (group_id,))
+                        cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=?", (group_id,))
                         exists = cur.fetchone()
                         if not exists:
                             quota = PLANS.get(plan_type, {}).get('quota', 0)
                             cur.execute(
-                                "INSERT INTO groups (group_id, plan_type, plan_owner, plan_remaining) VALUES (?, ?, ?, ?)",
-                                (group_id, plan_type, user_id, quota)
+                               "INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)",
+                                (group_id, user_id)
                             )
                             conn.commit()
                     else:
