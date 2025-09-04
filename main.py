@@ -88,29 +88,25 @@ PLANS = {
 # 支持的重置指令
 RESET_ALIASES = {"/re", "/reset", "/resetlang"}
 
-# ===================== DB 初始化（沿用新程序结构） =====================
+# ===================== DB 初始化 =====================
+
 import os, shutil, logging
 
-# ===== SQLite 持久化到 Render 磁盘 =====
-DEFAULT_DB = "bot.db"                          # 旧位置（容器临时盘）
-DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")  # 新位置（持久磁盘）
+DEFAULT_DB = "bot.db"
+DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
 
-# 确保目录存在
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-# 一次性迁移：若新路径不存在、但旧 DB 存在，则拷贝过去（仅首轮有效）
 try:
     if DB_PATH != DEFAULT_DB and (not os.path.exists(DB_PATH)) and os.path.exists(DEFAULT_DB):
         shutil.copyfile(DEFAULT_DB, DB_PATH)
 except Exception as e:
     logging.warning(f"DB migrate copy failed: {e}")
 
-# 连接持久化 DB
 conn = sqlite3.connect(DB_PATH, check_same_thread=False, isolation_level=None)
 cur = conn.cursor()
 logging.info(f"Using DB at {DB_PATH} (exists={os.path.exists(DB_PATH)})")
 
-# （推荐）提高稳定性/并发的 SQLite 参数
 try:
     cur.execute("PRAGMA journal_mode=WAL;")
     cur.execute("PRAGMA synchronous=NORMAL;")
@@ -118,60 +114,32 @@ try:
 except Exception as e:
     logging.warning(f"PRAGMA set failed: {e}")
 
-# users：个人免费额度（默认5000）
+# users：个人免费额度
 cur.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id TEXT PRIMARY KEY,
     free_remaining INTEGER
-)""")
+)
+""")
 
-# user_prefs：同一个人可以在同一个群组选多语言（主键三列）
-def ensure_user_prefs():
-    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_prefs'")
-    exists = cur.fetchone()
-    if not exists:
-        cur.execute("""
-        CREATE TABLE user_prefs (
-            user_id TEXT,
-            group_id TEXT,
-            target_lang TEXT,
-            PRIMARY KEY(user_id, group_id, target_lang)
-        )""")
-        conn.commit()
-        return
-    try:
-        cur.execute("PRAGMA table_info(user_prefs)")
-        info = cur.fetchall()
-        pk_cols = [row[1] for row in info if int(row[5] or 0) > 0]
-        if set(pk_cols) != {"user_id", "group_id", "target_lang"}:
-            cur.execute("ALTER TABLE user_prefs RENAME TO user_prefs_old")
-            cur.execute("""
-            CREATE TABLE user_prefs (
-                user_id TEXT,
-                group_id TEXT,
-                target_lang TEXT,
-                PRIMARY KEY(user_id, group_id, target_lang)
-            )""")
-            cur.execute("""
-            INSERT OR IGNORE INTO user_prefs (user_id, group_id, target_lang)
-            SELECT user_id, group_id, target_lang FROM user_prefs_old
-            WHERE target_lang IS NOT NULL AND target_lang <> ''
-            """)
-            cur.execute("DROP TABLE user_prefs_old")
-            conn.commit()
-    except Exception:
-        pass
-
-ensure_user_prefs()
-
-# groups：把某个用户的套餐绑定到若干群里并记余额
+# user_prefs：用户语言偏好
 cur.execute("""
-CREATE TABLE IF NOT EXISTS groups (
+CREATE TABLE IF NOT EXISTS user_prefs (
+    user_id TEXT,
+    group_id TEXT,
+    target_lang TEXT,
+    PRIMARY KEY(user_id, group_id, target_lang)
+)
+""")
+
+# group_bindings：群绑定关系（新逻辑）
+cur.execute("""
+CREATE TABLE IF NOT EXISTS group_bindings (
     group_id TEXT PRIMARY KEY,
-    plan_type TEXT,
-    plan_owner TEXT,
-    plan_remaining INTEGER
-)""")
+    owner_id TEXT NOT NULL,
+    bound_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+""")
 
 # user_plans：记录用户购买的套餐
 cur.execute("""
@@ -180,9 +148,10 @@ CREATE TABLE IF NOT EXISTS user_plans (
     plan_type TEXT,
     max_groups INTEGER,
     subscription_id TEXT
-)""")
+)
+""")
 
-# 翻译缓存（表存在即可，实际只用内存缓存避免并发锁）
+# translations_cache：翻译缓存
 cur.execute("""
 CREATE TABLE IF NOT EXISTS translations_cache (
     text TEXT,
@@ -190,10 +159,10 @@ CREATE TABLE IF NOT EXISTS translations_cache (
     target_lang TEXT,
     translated TEXT,
     PRIMARY KEY(text, source_lang, target_lang)
-)""")
-conn.commit()
+)
+""")
 
-translation_cache = {}  # (text, sl, tl) -> translated
+conn.commit()
 
 # ===================== 工具函数 =====================
 def first_token(s: str) -> str:
