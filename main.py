@@ -622,19 +622,22 @@ def line_webhook():
     return "OK"
 
 
-# ---------------- Stripe Webhook（沿用新程序） ----------------
+# ---------------- Stripe Webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
     payload = request.get_data(as_text=False)
     sig_header = request.headers.get("Stripe-Signature", "")
 
+    # 校验签名
     if STRIPE_WEBHOOK_SECRET:
         try:
             timestamp, signature = None, None
             for part in sig_header.split(","):
                 k, v = part.split("=", 1)
-                if k == "t":  timestamp = v
-                elif k == "v1": signature = v
+                if k == "t":
+                    timestamp = v
+                elif k == "v1":
+                    signature = v
             signed_payload = f"{timestamp}.{payload.decode('utf-8')}"
             expected = hmac.new(STRIPE_WEBHOOK_SECRET.encode('utf-8'),
                                 signed_payload.encode('utf-8'), hashlib.sha256).hexdigest()
@@ -651,6 +654,7 @@ def stripe_webhook():
     etype = event.get("type")
     obj   = event.get("data", {}).get("object", {})
 
+    # 付款完成
     if etype == "checkout.session.completed":
         user_id   = obj.get("client_reference_id")
         sub_id    = obj.get("subscription")
@@ -665,30 +669,34 @@ def stripe_webhook():
 
         if user_id and plan_name:
             max_groups = PLANS[plan_name]['max_groups']
+            # 更新用户套餐信息
             cur.execute("""INSERT OR REPLACE INTO user_plans
                            (user_id, plan_type, max_groups, subscription_id)
                            VALUES (?, ?, ?, ?)""",
                         (user_id, plan_name, max_groups, sub_id))
             conn.commit()
 
+            # 如果有 group_id，尝试绑定群
             if group_id:
-                cur.execute("SELECT COUNT(*) FROM groups WHERE plan_owner=?", (user_id,))
-                used = cur.fetchone()[0]
+                cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,))
+                used = cur.fetchone()[0] or 0
                 if used < max_groups:
-                    cur.execute("SELECT 1 FROM groups WHERE group_id=?", (group_id,))
+                    cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=?", (group_id,))
                     exists = cur.fetchone()
                     if not exists:
-                        quota = PLANS[plan_name]['quota']
-                        cur.execute("""INSERT INTO groups
-                                       (group_id, plan_type, plan_owner, plan_remaining)
-                                       VALUES (?, ?, ?, ?)""",
-                                    (group_id, plan_name, user_id, quota))
+                        cur.execute(
+                            "INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)",
+                            (group_id, user_id)
+                        )
                         conn.commit()
                 else:
-                    send_push_text(user_id, f"當前套餐最多可用於 {max_groups} 個群組，已達上限，無法激活新群（{group_id}）。請升級套餐。")
+                    send_push_text(user_id,
+                        f"當前套餐最多可用於 {max_groups} 個群組，已達上限，無法激活新群（{group_id}）。請升級套餐。")
 
-            send_push_text(user_id, f"Thank you for purchasing the {plan_name} plan! Your plan is now active.")
+            send_push_text(user_id,
+                f"Thank you for purchasing the {plan_name} plan! Your plan is now active.")
 
+    # 自动续费成功
     elif etype == "invoice.payment_succeeded":
         sub_id = obj.get("subscription")
         if obj.get("billing_reason") == "subscription_cycle" and sub_id:
@@ -696,14 +704,11 @@ def stripe_webhook():
             row = cur.fetchone()
             if row:
                 user_id, plan_type = row
-                add_quota = PLANS.get(plan_type, {}).get('quota', 0)
-                cur.execute("""UPDATE groups
-                               SET plan_remaining = COALESCE(plan_remaining,0) + ?
-                               WHERE plan_owner=?""",
-                            (add_quota, user_id))
-                conn.commit()
+                # TODO: 如果要做字数额度重置，可以在 user_plans 新增 remaining_quota，在这里重置
+                send_push_text(user_id, f"Your {plan_type} plan has been renewed successfully.")
 
     return "OK"
+
 
 # ---------------- 启动 ----------------
 if __name__ == "__main__":
