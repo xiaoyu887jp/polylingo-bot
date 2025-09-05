@@ -88,25 +88,29 @@ PLANS = {
 # 支持的重置指令
 RESET_ALIASES = {"/re", "/reset", "/resetlang"}
 
-# ===================== DB 初始化 =====================
-
+# ===================== DB 初始化（沿用新程序结构） =====================
 import os, shutil, logging
 
-DEFAULT_DB = "bot.db"
-DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")
+# ===== SQLite 持久化到 Render 磁盘 =====
+DEFAULT_DB = "bot.db"                          # 旧位置（容器临时盘）
+DB_PATH = os.getenv("DB_PATH", "/var/data/bot.db")  # 新位置（持久磁盘）
 
+# 确保目录存在
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
+# 一次性迁移：若新路径不存在、但旧 DB 存在，则拷贝过去（仅首轮有效）
 try:
     if DB_PATH != DEFAULT_DB and (not os.path.exists(DB_PATH)) and os.path.exists(DEFAULT_DB):
         shutil.copyfile(DEFAULT_DB, DB_PATH)
 except Exception as e:
     logging.warning(f"DB migrate copy failed: {e}")
 
+# 连接持久化 DB
 conn = sqlite3.connect(DB_PATH, check_same_thread=False, isolation_level=None)
 cur = conn.cursor()
 logging.info(f"Using DB at {DB_PATH} (exists={os.path.exists(DB_PATH)})")
 
+# （推荐）提高稳定性/并发的 SQLite 参数
 try:
     cur.execute("PRAGMA journal_mode=WAL;")
     cur.execute("PRAGMA synchronous=NORMAL;")
@@ -114,32 +118,60 @@ try:
 except Exception as e:
     logging.warning(f"PRAGMA set failed: {e}")
 
-# users：个人免费额度
+# users：个人免费额度（默认5000）
 cur.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id TEXT PRIMARY KEY,
     free_remaining INTEGER
-)
-""")
+)""")
 
-# user_prefs：用户语言偏好
-cur.execute("""
-CREATE TABLE IF NOT EXISTS user_prefs (
-    user_id TEXT,
-    group_id TEXT,
-    target_lang TEXT,
-    PRIMARY KEY(user_id, group_id, target_lang)
-)
-""")
+# user_prefs：同一个人可以在同一个群组选多语言（主键三列）
+def ensure_user_prefs():
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_prefs'")
+    exists = cur.fetchone()
+    if not exists:
+        cur.execute("""
+        CREATE TABLE user_prefs (
+            user_id TEXT,
+            group_id TEXT,
+            target_lang TEXT,
+            PRIMARY KEY(user_id, group_id, target_lang)
+        )""")
+        conn.commit()
+        return
+    try:
+        cur.execute("PRAGMA table_info(user_prefs)")
+        info = cur.fetchall()
+        pk_cols = [row[1] for row in info if int(row[5] or 0) > 0]
+        if set(pk_cols) != {"user_id", "group_id", "target_lang"}:
+            cur.execute("ALTER TABLE user_prefs RENAME TO user_prefs_old")
+            cur.execute("""
+            CREATE TABLE user_prefs (
+                user_id TEXT,
+                group_id TEXT,
+                target_lang TEXT,
+                PRIMARY KEY(user_id, group_id, target_lang)
+            )""")
+            cur.execute("""
+            INSERT OR IGNORE INTO user_prefs (user_id, group_id, target_lang)
+            SELECT user_id, group_id, target_lang FROM user_prefs_old
+            WHERE target_lang IS NOT NULL AND target_lang <> ''
+            """)
+            cur.execute("DROP TABLE user_prefs_old")
+            conn.commit()
+    except Exception:
+        pass
 
-# group_bindings：群绑定关系（新逻辑）
+ensure_user_prefs()
+
+# groups：把某个用户的套餐绑定到若干群里并记余额
 cur.execute("""
-CREATE TABLE IF NOT EXISTS group_bindings (
+CREATE TABLE IF NOT EXISTS groups (
     group_id TEXT PRIMARY KEY,
-    owner_id TEXT NOT NULL,
-    bound_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)
-""")
+    plan_type TEXT,
+    plan_owner TEXT,
+    plan_remaining INTEGER
+)""")
 
 # user_plans：记录用户购买的套餐
 cur.execute("""
@@ -148,10 +180,9 @@ CREATE TABLE IF NOT EXISTS user_plans (
     plan_type TEXT,
     max_groups INTEGER,
     subscription_id TEXT
-)
-""")
+)""")
 
-# translations_cache：翻译缓存
+# 翻译缓存（表存在即可，实际只用内存缓存避免并发锁）
 cur.execute("""
 CREATE TABLE IF NOT EXISTS translations_cache (
     text TEXT,
@@ -159,10 +190,10 @@ CREATE TABLE IF NOT EXISTS translations_cache (
     target_lang TEXT,
     translated TEXT,
     PRIMARY KEY(text, source_lang, target_lang)
-)
-""")
-
+)""")
 conn.commit()
+
+translation_cache = {}  # (text, sl, tl) -> translated
 
 # ===================== 工具函数 =====================
 def first_token(s: str) -> str:
@@ -445,70 +476,91 @@ def line_webhook():
             tnorm = text.strip().lower()
             if tnorm in LANG_CODES:
                 lang_code = tnorm
+                # 保存语言偏好
                 cur.execute(
                     "INSERT OR IGNORE INTO user_prefs (user_id, group_id, target_lang) VALUES (?, ?, ?)",
                     (user_id, group_id, lang_code)
                 )
                 conn.commit()
 
-                # ===== 群绑定逻辑 =====
+                # ===== 新增：綁定群到套餐 =====
                 cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=?", (user_id,))
                 row = cur.fetchone()
                 if row:
                     plan_type, max_groups = row
+
+                    # 已绑定的群数（必须按 owner_id 过滤）
                     cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,))
                     used = cur.fetchone()[0] or 0
+                   
 
+                    # 该群是否已存在
                     cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=?", (group_id,))
                     exists = cur.fetchone()
+
                     if exists:
-                        msg = "该群已在你的套餐名下。" if exists[0] == user_id else "⚠️ 该群已绑定在其他账户下。"
+                        # 已经有人绑定
+                        if exists[0] == user_id:
+                            msg = "该群已在你的套餐名下。"
+                        else:
+                            msg = "⚠️ 该群已绑定在其他账户下，无法重复绑定。"
                         send_reply_message(reply_token, [{"type": "text", "text": msg}])
                         continue
 
+                    # 限额校验（None 表示不限额）
                     if (max_groups is None) or (used < max_groups):
                         try:
-                            cur.execute("INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)", (group_id, user_id))
+                            cur.execute(
+                                "INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)",
+                                (group_id, user_id)
+                            )
                             conn.commit()
                             msg = "✅ 群绑定成功。"
                         except sqlite3.IntegrityError:
                             msg = "⚠️ 并发冲突，该群已被绑定。"
                         send_reply_message(reply_token, [{"type": "text", "text": msg}])
                     else:
+                        # 群数已满 → 明确提示用户
                         send_reply_message(reply_token, [{
                             "type": "text",
                             "text": f"⚠️ 你的套餐最多可綁定 {max_groups} 個群組。請在舊群輸入 /unbind 解除綁定，或升級套餐。"
                         }])
                     continue
 
+                # 回覆當前語言設置
                 cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=? AND group_id=?", (user_id, group_id))
                 my_langs = [r[0] for r in cur.fetchall()] or [lang_code]
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}])
                 continue
 
+
             # B3) 非群聊不翻译
             if not group_id:
                 continue
 
-            # B4) 收集发言者的目标语言
+            # B4) 收集发言者在本群配置的目标语言，过滤掉与原文同语种
             cur.execute("SELECT target_lang FROM user_prefs WHERE group_id=? AND user_id=?", (group_id, user_id))
             configured = [row[0].lower() for row in cur.fetchall() if row and row[0]]
             configured = list(dict.fromkeys(configured))
             if not configured:
-                tip = "請先為【你自己】設定翻譯語言，輸入 /reset 會出現語言卡片。\nSet your language with /re."
-                send_reply_message(reply_token, [{"type": "text", "text": tip}])
-                continue
-
+                tip = ("請先為【你自己】設定翻譯語言，輸入 /re /reset /resetlang 會出現語言卡片。\n"
+                       "Set your language with /re.")
+            # 猜原文语种
             src_hint = guess_source_lang(text)
             targets = [tl for tl in configured if (not src_hint or tl != src_hint)]
-            if not targets:
+            if not configured:
+                send_reply_message(reply_token, [{"type": "text", "text": tip}])
                 continue
+            if not targets:
+                continue  # 配置的语言刚好都等于原文语种，本次不翻译
 
+            # 一次性拿头像/昵称
             profile = get_user_profile_cached(user_id, group_id) or {}
             icon = profile.get("pictureUrl") or BOT_AVATAR_FALLBACK
             display_name = (profile.get("displayName") or "User")[:20]
 
-            # B5) 翻译
+            # B5) 翻译：单语快路径，多语并发，传入源语种提示
+            t0 = time.perf_counter()
             translations = []
             if len(targets) == 1:
                 tl = targets[0]
@@ -524,28 +576,32 @@ def line_webhook():
                         if r:
                             txt = r[0] if isinstance(r, tuple) else r
                             translations.append((tl, txt))
+            logging.info(f"[translate] langs={len(targets)} elapsed_ms={(time.perf_counter()-t0)*1000:.1f}")
 
             # B6) 扣费
             chars_used = len(text) * max(1, len(translations))
-            cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=?", (group_id,))
-            bind = cur.fetchone()
-            if bind:
-                cur.execute("SELECT plan_type FROM user_plans WHERE user_id=?", (bind[0],))
-                plan_row = cur.fetchone()
-                if not plan_row:
-                    continue  # 没有套餐信息，暂时跳过
-                # TODO: 在 user_plans 表增加 remaining_quota 字段，在这里进行扣减
+            cur.execute("SELECT plan_type, plan_remaining, plan_owner FROM groups WHERE group_id=?", (group_id,))
+            group_plan = cur.fetchone()
+            if group_plan:
+                if not atomic_deduct_group_quota(group_id, chars_used):
+                    alert = build_group_quota_alert(user_id)
+                    send_reply_message(reply_token, [
+                        {"type": "text", "text": alert},
+                        {"type": "text", "text": build_buy_link(user_id)}  # 只有URL，最稳触发预览
+                    ])
+                    continue
+                 
             else:
                 ok, _remain = atomic_deduct_user_free_quota(user_id, chars_used)
                 if not ok:
-                    alert = build_free_quota_alert(user_id)
+                    alert = build_free_quota_alert(user_id)  # 含购买链接 & line_id
                     send_reply_message(reply_token, [
                         {"type": "text", "text": alert},
-                        {"type": "text", "text": build_buy_link(user_id)}
+                        {"type": "text", "text": build_buy_link(user_id)}  # 单独 URL 一条，更稳触发网页预览
                     ])
                     continue
 
-            # B7) 发送
+            # B7) 发送（沿用你“用个人头像”的体验）
             sender_icon = icon if ALWAYS_USER_AVATAR else BOT_AVATAR_FALLBACK
             messages = []
             for lang_code, txt in translations:
@@ -555,9 +611,9 @@ def line_webhook():
                     "sender": {"name": f"{display_name} ({lang_code})"[:20], "iconUrl": sender_icon}
                 })
             if messages:
-                send_reply_message(reply_token, messages[:5])
+                send_reply_message(reply_token, messages[:5])  # LINE 每次最多 5 条
 
-        # C) 旧卡 postback
+        # C) 旧卡 postback：data=lang=xx
         if etype == "postback":
             data_pb = (event.get("postback", {}) or {}).get("data", "")
             if data_pb.startswith("lang="):
@@ -568,45 +624,49 @@ def line_webhook():
                 )
                 conn.commit()
 
+                # 套餐绑定
                 cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=?", (user_id,))
                 plan = cur.fetchone()
                 if plan:
                     plan_type, max_groups = plan
                     cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,))
+
                     used = cur.fetchone()[0]
                     if used < (max_groups or 0):
                         cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=?", (group_id,))
                         exists = cur.fetchone()
                         if not exists:
-                            cur.execute("INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)", (group_id, user_id))
+                            quota = PLANS.get(plan_type, {}).get('quota', 0)
+                            cur.execute(
+                               "INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)",
+                                (group_id, user_id)
+                            )
                             conn.commit()
                     else:
-                        alert = f"當前套餐最多可用於{max_groups}個群組，請升級套餐。\nCurrent plan allows up to {max_groups} groups."
+                        alert = (f"當前套餐最多可用於{max_groups}個群組，請升級套餐。\n"
+                                 f"Current plan allows up to {max_groups} groups. Please upgrade for more.")
                         send_reply_message(reply_token, [{"type": "text", "text": alert}])
 
+                # 回显本人在本群全部语言
                 cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=? AND group_id=?", (user_id, group_id))
                 my_langs = [r[0] for r in cur.fetchall()] or [lang_code]
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}])
 
     return "OK"
 
-
-# ---------------- Stripe Webhook ----------------
+# ---------------- Stripe Webhook（沿用新程序） ----------------
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
     payload = request.get_data(as_text=False)
     sig_header = request.headers.get("Stripe-Signature", "")
 
-    # 校验签名
     if STRIPE_WEBHOOK_SECRET:
         try:
             timestamp, signature = None, None
             for part in sig_header.split(","):
                 k, v = part.split("=", 1)
-                if k == "t":
-                    timestamp = v
-                elif k == "v1":
-                    signature = v
+                if k == "t":  timestamp = v
+                elif k == "v1": signature = v
             signed_payload = f"{timestamp}.{payload.decode('utf-8')}"
             expected = hmac.new(STRIPE_WEBHOOK_SECRET.encode('utf-8'),
                                 signed_payload.encode('utf-8'), hashlib.sha256).hexdigest()
@@ -623,7 +683,6 @@ def stripe_webhook():
     etype = event.get("type")
     obj   = event.get("data", {}).get("object", {})
 
-    # 付款完成
     if etype == "checkout.session.completed":
         user_id   = obj.get("client_reference_id")
         sub_id    = obj.get("subscription")
@@ -638,34 +697,30 @@ def stripe_webhook():
 
         if user_id and plan_name:
             max_groups = PLANS[plan_name]['max_groups']
-            # 更新用户套餐信息
             cur.execute("""INSERT OR REPLACE INTO user_plans
                            (user_id, plan_type, max_groups, subscription_id)
                            VALUES (?, ?, ?, ?)""",
                         (user_id, plan_name, max_groups, sub_id))
             conn.commit()
 
-            # 如果有 group_id，尝试绑定群
             if group_id:
-                cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,))
-                used = cur.fetchone()[0] or 0
+                cur.execute("SELECT COUNT(*) FROM groups WHERE plan_owner=?", (user_id,))
+                used = cur.fetchone()[0]
                 if used < max_groups:
-                    cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=?", (group_id,))
+                    cur.execute("SELECT 1 FROM groups WHERE group_id=?", (group_id,))
                     exists = cur.fetchone()
                     if not exists:
-                        cur.execute(
-                            "INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)",
-                            (group_id, user_id)
-                        )
+                        quota = PLANS[plan_name]['quota']
+                        cur.execute("""INSERT INTO groups
+                                       (group_id, plan_type, plan_owner, plan_remaining)
+                                       VALUES (?, ?, ?, ?)""",
+                                    (group_id, plan_name, user_id, quota))
                         conn.commit()
                 else:
-                    send_push_text(user_id,
-                        f"當前套餐最多可用於 {max_groups} 個群組，已達上限，無法激活新群（{group_id}）。請升級套餐。")
+                    send_push_text(user_id, f"當前套餐最多可用於 {max_groups} 個群組，已達上限，無法激活新群（{group_id}）。請升級套餐。")
 
-            send_push_text(user_id,
-                f"Thank you for purchasing the {plan_name} plan! Your plan is now active.")
+            send_push_text(user_id, f"Thank you for purchasing the {plan_name} plan! Your plan is now active.")
 
-    # 自动续费成功
     elif etype == "invoice.payment_succeeded":
         sub_id = obj.get("subscription")
         if obj.get("billing_reason") == "subscription_cycle" and sub_id:
@@ -673,11 +728,14 @@ def stripe_webhook():
             row = cur.fetchone()
             if row:
                 user_id, plan_type = row
-                # TODO: 如果要做字数额度重置，可以在 user_plans 新增 remaining_quota，在这里重置
-                send_push_text(user_id, f"Your {plan_type} plan has been renewed successfully.")
+                add_quota = PLANS.get(plan_type, {}).get('quota', 0)
+                cur.execute("""UPDATE groups
+                               SET plan_remaining = COALESCE(plan_remaining,0) + ?
+                               WHERE plan_owner=?""",
+                            (add_quota, user_id))
+                conn.commit()
 
     return "OK"
-
 
 # ---------------- 启动 ----------------
 if __name__ == "__main__":
