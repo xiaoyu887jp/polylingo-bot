@@ -654,7 +654,7 @@ def line_webhook():
 
     return "OK"
 
-# ---------------- Stripe Webhook（沿用新程序） ----------------
+# ---------------- Stripe Webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
     payload = request.get_data(as_text=False)
@@ -665,30 +665,35 @@ def stripe_webhook():
             timestamp, signature = None, None
             for part in sig_header.split(","):
                 k, v = part.split("=", 1)
-                if k == "t":  timestamp = v
-                elif k == "v1": signature = v
+                if k == "t":
+                    timestamp = v
+                elif k == "v1":
+                    signature = v
             signed_payload = f"{timestamp}.{payload.decode('utf-8')}"
-            expected = hmac.new(STRIPE_WEBHOOK_SECRET.encode('utf-8'),
-                                signed_payload.encode('utf-8'), hashlib.sha256).hexdigest()
+            expected = hmac.new(
+                STRIPE_WEBHOOK_SECRET.encode("utf-8"),
+                signed_payload.encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()
             if not hmac.compare_digest(expected, signature or ""):
                 abort(400)
         except Exception:
             abort(400)
 
     try:
-        event = json.loads(payload.decode('utf-8'))
+        event = json.loads(payload.decode("utf-8"))
     except:
         abort(400)
 
     etype = event.get("type")
-    obj   = event.get("data", {}).get("object", {})
+    obj = event.get("data", {}).get("object", {})
 
     if etype == "checkout.session.completed":
-        user_id   = obj.get("client_reference_id")
-        sub_id    = obj.get("subscription")
-        metadata  = obj.get("metadata") or {}
+        user_id = obj.get("client_reference_id")
+        sub_id = obj.get("subscription")
+        metadata = obj.get("metadata") or {}
         plan_name = (metadata.get("plan") or "").capitalize() or None
-        group_id  = metadata.get("group_id")
+        group_id = metadata.get("group_id")
 
         if not plan_name and obj.get("display_items"):
             plan_name = obj["display_items"][0].get("plan", {}).get("nickname")
@@ -696,46 +701,50 @@ def stripe_webhook():
             plan_name = None
 
         if user_id and plan_name:
-            max_groups = PLANS[plan_name]['max_groups']
-            cur.execute("""INSERT OR REPLACE INTO user_plans
-                           (user_id, plan_type, max_groups, subscription_id)
-                           VALUES (?, ?, ?, ?)""",
-                        (user_id, plan_name, max_groups, sub_id))
+            max_groups = PLANS[plan_name]["max_groups"]
+
+            # 1. 更新用户套餐
+            cur.execute(
+                """INSERT OR REPLACE INTO user_plans
+                   (user_id, plan_type, max_groups, subscription_id)
+                   VALUES (?, ?, ?, ?)""",
+                (user_id, plan_name, max_groups, sub_id),
+            )
             conn.commit()
 
+            # 2. 如果有 group_id，绑定群
             if group_id:
-                cur.execute("SELECT COUNT(*) FROM groups WHERE plan_owner=?", (user_id,))
-                used = cur.fetchone()[0]
+                cur.execute(
+                    "SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,)
+                )
+                used = cur.fetchone()[0] or 0
                 if used < max_groups:
-                    cur.execute("SELECT 1 FROM groups WHERE group_id=?", (group_id,))
+                    cur.execute(
+                        "SELECT owner_id FROM group_bindings WHERE group_id=?",
+                        (group_id,),
+                    )
                     exists = cur.fetchone()
                     if not exists:
-                        quota = PLANS[plan_name]['quota']
-                        cur.execute("""INSERT INTO groups
-                                       (group_id, plan_type, plan_owner, plan_remaining)
-                                       VALUES (?, ?, ?, ?)""",
-                                    (group_id, plan_name, user_id, quota))
+                        cur.execute(
+                            "INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)",
+                            (group_id, user_id),
+                        )
                         conn.commit()
                 else:
-                    send_push_text(user_id, f"當前套餐最多可用於 {max_groups} 個群組，已達上限，無法激活新群（{group_id}）。請升級套餐。")
+                    send_push_text(
+                        user_id,
+                        f"當前套餐最多可用於 {max_groups} 個群組，已達上限，無法激活新群（{group_id}）。請升級套餐。",
+                    )
 
-            send_push_text(user_id, f"Thank you for purchasing the {plan_name} plan! Your plan is now active.")
-
-    elif etype == "invoice.payment_succeeded":
-        sub_id = obj.get("subscription")
-        if obj.get("billing_reason") == "subscription_cycle" and sub_id:
-            cur.execute("SELECT user_id, plan_type FROM user_plans WHERE subscription_id=?", (sub_id,))
-            row = cur.fetchone()
-            if row:
-                user_id, plan_type = row
-                add_quota = PLANS.get(plan_type, {}).get('quota', 0)
-                cur.execute("""UPDATE groups
-                               SET plan_remaining = COALESCE(plan_remaining,0) + ?
-                               WHERE plan_owner=?""",
-                            (add_quota, user_id))
-                conn.commit()
+            # 3. 通知用户
+            send_push_text(
+                user_id,
+                f"Thank you for purchasing the {plan_name} plan! Your plan is now active.",
+            )
 
     return "OK"
+
+
 
 # ---------------- 启动 ----------------
 if __name__ == "__main__":
