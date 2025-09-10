@@ -45,25 +45,31 @@ LINE_CHANNEL_SECRET = (
 # ===================== 购买链接 =====================
 BUY_URL_BASE = "https://saygo-translator.carrd.co"
 
-def build_buy_link(user_id: str) -> str:
-    # 带上 line_id，便于网页识别/后续对接
-    return f"{BUY_URL_BASE}?line_id={user_id}"
+from typing import Optional  # 你顶部已导入，无需重复
 
-def build_free_quota_alert(user_id: str) -> str:
-    url = build_buy_link(user_id)
+def build_buy_link(user_id: str, group_id: Optional[str] = None) -> str:
+    url = f"{BUY_URL_BASE}?line_id={user_id}"
+    if group_id:
+        url += f"&group_id={group_id}"
+    return url
+
+
+def build_free_quota_alert(user_id: str, group_id: Optional[str] = None) -> str:
+    url = build_buy_link(user_id, group_id)
     return (
         "⚠️ 您的免費翻譯额度已用完，請升級套餐。\n"
         "Your free translation quota is used up. Please upgrade your plan.\n"
         f"{url}"
     )
 
-def build_group_quota_alert(user_id: str) -> str:
-    url = build_buy_link(user_id)
+def build_group_quota_alert(user_id: str, group_id: Optional[str] = None) -> str:
+    url = build_buy_link(user_id, group_id)
     return (
         "⚠️ 本群翻譯额度已用盡，請升級套餐或新增群可用额度。\n"
         "Translation quota for this group is exhausted. Please upgrade your plan.\n"
         f"{url}"
     )
+
 
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "<STRIPE_WEBHOOK_SECRET>")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")  # ✅ 官方翻译 API key 仅从环境读取
@@ -584,20 +590,20 @@ def line_webhook():
             group_plan = cur.fetchone()
             if group_plan:
                 if not atomic_deduct_group_quota(group_id, chars_used):
-                    alert = build_group_quota_alert(user_id)
+                    alert = build_group_quota_alert(user_id, group_id)
                     send_reply_message(reply_token, [
                         {"type": "text", "text": alert},
-                        {"type": "text", "text": build_buy_link(user_id)}  # 只有URL，最稳触发预览
+                        {"type": "text", "text": build_buy_link(user_id, group_id)}
                     ])
                     continue
                  
             else:
                 ok, _remain = atomic_deduct_user_free_quota(user_id, chars_used)
                 if not ok:
-                    alert = build_free_quota_alert(user_id)  # 含购买链接 & line_id
+                    alert = build_free_quota_alert(user_id, group_id)
                     send_reply_message(reply_token, [
                         {"type": "text", "text": alert},
-                        {"type": "text", "text": build_buy_link(user_id)}  # 单独 URL 一条，更稳触发网页预览
+                        {"type": "text", "text": build_buy_link(user_id, group_id)}
                     ])
                     continue
 
@@ -657,90 +663,100 @@ def line_webhook():
 # ---------------- Stripe Webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
-    payload = request.get_data(as_text=False)
+    payload = request.get_data(as_text=False)  # bytes
     sig_header = request.headers.get("Stripe-Signature", "")
 
+    # 手动校验签名（使用 STRIPE_WEBHOOK_SECRET）
     if STRIPE_WEBHOOK_SECRET:
         try:
-            timestamp, signature = None, None
+            ts, v1 = None, None
             for part in sig_header.split(","):
                 k, v = part.split("=", 1)
                 if k == "t":
-                    timestamp = v
+                    ts = v
                 elif k == "v1":
-                    signature = v
-            signed_payload = f"{timestamp}.{payload.decode('utf-8')}"
+                    v1 = v
+            if not (ts and v1):
+                abort(400)
+            signed = f"{ts}.{payload.decode('utf-8')}"
             expected = hmac.new(
                 STRIPE_WEBHOOK_SECRET.encode("utf-8"),
-                signed_payload.encode("utf-8"),
+                signed.encode("utf-8"),
                 hashlib.sha256,
             ).hexdigest()
-            if not hmac.compare_digest(expected, signature or ""):
+            if not hmac.compare_digest(expected, v1):
                 abort(400)
         except Exception:
             abort(400)
 
+    # 解析事件
     try:
         event = json.loads(payload.decode("utf-8"))
-    except:
+    except Exception:
         abort(400)
 
     etype = event.get("type")
-    obj = event.get("data", {}).get("object", {})
 
     if etype == "checkout.session.completed":
-        user_id = obj.get("client_reference_id")
-        sub_id = obj.get("subscription")
-        metadata = obj.get("metadata") or {}
-        plan_name = (metadata.get("plan") or "").capitalize() or None
-        group_id = metadata.get("group_id")
+        obj = (event.get("data", {}) or {}).get("object", {}) or {}
 
-        if not plan_name and obj.get("display_items"):
-            plan_name = obj["display_items"][0].get("plan", {}).get("nickname")
-        if plan_name and plan_name not in PLANS:
-            plan_name = None
+        user_id  = obj.get("client_reference_id")     # 我们放了 line_id
+        sub_id   = obj.get("subscription")
+        md       = obj.get("metadata") or {}
+        plan_name = (md.get("plan") or "").strip().capitalize()
+        group_id  = md.get("group_id")
 
-        if user_id and plan_name:
-            max_groups = PLANS[plan_name]["max_groups"]
+        # 兼容旧版（从 display_items 里取昵称）
+        if (not plan_name) and obj.get("display_items"):
+            plan_name = ((obj["display_items"][0].get("plan") or {}).get("nickname") or "").strip().capitalize()
 
-            # 1. 更新用户套餐
-            cur.execute(
-                """INSERT OR REPLACE INTO user_plans
-                   (user_id, plan_type, max_groups, subscription_id)
-                   VALUES (?, ?, ?, ?)""",
-                (user_id, plan_name, max_groups, sub_id),
-            )
-            conn.commit()
+        # 无效计划或无 user_id 直接忽略
+        if (not user_id) or (plan_name not in PLANS):
+            return "OK"
 
-            # 2. 如果有 group_id，绑定群
-            if group_id:
-                cur.execute(
-                    "SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,)
-                )
+        max_groups = PLANS[plan_name]["max_groups"]
+        quota      = PLANS[plan_name]["quota"]
+
+        # 1) 记录/更新用户套餐
+        cur.execute(
+            """INSERT OR REPLACE INTO user_plans
+               (user_id, plan_type, max_groups, subscription_id)
+               VALUES (?, ?, ?, ?)""",
+            (user_id, plan_name, max_groups, sub_id),
+        )
+        conn.commit()
+
+        # 2) 如果带了 group_id：绑定该群并给该群充值额度
+        if group_id:
+            # 2.1 该群是否已被别人绑定
+            cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=?", (group_id,))
+            row = cur.fetchone()
+            if row and row[0] and row[0] != user_id:
+                # 已绑定在他人名下
+                send_push_text(user_id, f"⚠️ 該群（{group_id}）已綁定到其他帳號，無法重複綁定。")
+            else:
+                # 2.2 校验用户已绑定群数量是否超限
+                cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,))
                 used = cur.fetchone()[0] or 0
-                if used < max_groups:
-                    cur.execute(
-                        "SELECT owner_id FROM group_bindings WHERE group_id=?",
-                        (group_id,),
-                    )
-                    exists = cur.fetchone()
-                    if not exists:
-                        cur.execute(
-                            "INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)",
-                            (group_id, user_id),
-                        )
+                if row or (max_groups is None) or (used < max_groups):
+                    # 若尚未绑定则写入绑定关系
+                    if not row:
+                        cur.execute("INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)", (group_id, user_id))
                         conn.commit()
-                else:
-                    send_push_text(
-                        user_id,
-                        f"當前套餐最多可用於 {max_groups} 個群組，已達上限，無法激活新群（{group_id}）。請升級套餐。",
-                    )
 
-            # 3. 通知用户
-            send_push_text(
-                user_id,
-                f"Thank you for purchasing the {plan_name} plan! Your plan is now active.",
-            )
+                    # 给该群写入/重置套餐与额度（翻译扣费即查此表）
+                    cur.execute(
+                        "INSERT OR REPLACE INTO groups (group_id, plan_type, plan_owner, plan_remaining) VALUES (?, ?, ?, ?)",
+                        (group_id, plan_name, user_id, quota),
+                    )
+                    conn.commit()
+
+                    send_push_text(user_id, f"✅ {plan_name} 套餐已啟用，已為群 {group_id} 充值 {quota} 字。")
+                else:
+                    send_push_text(user_id, f"當前套餐最多可綁定 {max_groups} 個群組，已達上限，無法激活新群（{group_id}）。")
+        else:
+            # 未指定群，只激活账号层套餐
+            send_push_text(user_id, f"✅ {plan_name} 套餐已啟用。可在群裡輸入 /re 顯示語言卡後開始使用。")
 
     return "OK"
 
