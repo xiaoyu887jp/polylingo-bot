@@ -673,10 +673,10 @@ def line_webhook():
 # ---------------- Stripe Webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
-    payload = request.get_data(as_text=False)  # bytes
+    payload = request.get_data(as_text=False)  # 原始字节
     sig_header = request.headers.get("Stripe-Signature", "")
 
-    # 手动校验签名（使用 STRIPE_WEBHOOK_SECRET）
+    # 校验签名
     if STRIPE_WEBHOOK_SECRET:
         try:
             ts, v1 = None, None
@@ -710,24 +710,20 @@ def stripe_webhook():
     if etype == "checkout.session.completed":
         obj = (event.get("data", {}) or {}).get("object", {}) or {}
 
-        user_id  = obj.get("client_reference_id")     # 我们放了 line_id
+        user_id  = obj.get("client_reference_id")     # Checkout 里传的 line_id
         sub_id   = obj.get("subscription")
         md       = obj.get("metadata") or {}
         plan_name = (md.get("plan") or "").strip().capitalize()
         group_id  = md.get("group_id")
 
-        # 兼容旧版（从 display_items 里取昵称）
-        if (not plan_name) and obj.get("display_items"):
-            plan_name = ((obj["display_items"][0].get("plan") or {}).get("nickname") or "").strip().capitalize()
-
-        # 无效计划或无 user_id 直接忽略
+        # 无效计划或无 user_id → 忽略
         if (not user_id) or (plan_name not in PLANS):
             return "OK"
 
         max_groups = PLANS[plan_name]["max_groups"]
         quota      = PLANS[plan_name]["quota"]
 
-        # 1) 记录/更新用户套餐
+        # 1) 写入 / 更新用户套餐
         cur.execute(
             """INSERT OR REPLACE INTO user_plans
                (user_id, plan_type, max_groups, subscription_id)
@@ -736,40 +732,40 @@ def stripe_webhook():
         )
         conn.commit()
 
-        # 2) 如果带了 group_id：绑定该群并给该群充值额度
+        # 2) 如果有 group_id，绑定群并充值额度
         if group_id:
-            # 2.1 该群是否已被别人绑定
+            # 2.1 检查该群是否已经被绑定
             cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=?", (group_id,))
             row = cur.fetchone()
             if row and row[0] and row[0] != user_id:
-                # 已绑定在他人名下
-                send_push_text(user_id, f"⚠️ 該群（{group_id}）已綁定到其他帳號，無法重複綁定。")
+                # 已被别人绑定
+                send_push_text(user_id, f"⚠️ 群 {group_id} 已绑定到其他账号，无法重复绑定。")
             else:
-                # 2.2 校验用户已绑定群数量是否超限
+                # 2.2 校验用户群数是否超限
                 cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,))
                 used = cur.fetchone()[0] or 0
+
                 if row or (max_groups is None) or (used < max_groups):
-                    # 若尚未绑定则写入绑定关系
+                    # 插入 group_bindings
                     if not row:
                         cur.execute("INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)", (group_id, user_id))
                         conn.commit()
 
-                    # 给该群写入/重置套餐与额度（翻译扣费即查此表）
+                    # 插入 groups（额度）
                     cur.execute(
                         "INSERT OR REPLACE INTO groups (group_id, plan_type, plan_owner, plan_remaining) VALUES (?, ?, ?, ?)",
                         (group_id, plan_name, user_id, quota),
                     )
                     conn.commit()
 
-                    send_push_text(user_id, f"✅ {plan_name} 套餐已啟用，已為群 {group_id} 充值 {quota} 字。")
+                    send_push_text(user_id, f"✅ {plan_name} 套餐已启用，群 {group_id} 获得 {quota} 字额度。")
                 else:
-                    send_push_text(user_id, f"當前套餐最多可綁定 {max_groups} 個群組，已達上限，無法激活新群（{group_id}）。")
+                    send_push_text(user_id, f"⚠️ 你的套餐最多可绑定 {max_groups} 个群，已达上限，无法激活新群。")
         else:
-            # 未指定群，只激活账号层套餐
-            send_push_text(user_id, f"✅ {plan_name} 套餐已啟用。可在群裡輸入 /re 顯示語言卡後開始使用。")
+            # 没有群 id，只激活用户套餐
+            send_push_text(user_id, f"✅ {plan_name} 套餐已启用，可在群里输入 /re 来设置翻译语言。")
 
     return "OK"
-
 
 
 # ---------------- 启动 ----------------
