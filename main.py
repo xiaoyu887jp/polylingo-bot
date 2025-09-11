@@ -124,6 +124,8 @@ try:
 except Exception as e:
     logging.warning(f"PRAGMA set failed: {e}")
 
+# ===================== 建表 =====================
+
 # users：个人免费额度（默认5000）
 cur.execute("""
 CREATE TABLE IF NOT EXISTS users (
@@ -186,6 +188,14 @@ CREATE TABLE IF NOT EXISTS user_plans (
     plan_type TEXT,
     max_groups INTEGER,
     subscription_id TEXT
+)""")
+
+# ✅ 新增：群绑定表（记录哪个用户占用了哪些群名额）
+cur.execute("""
+CREATE TABLE IF NOT EXISTS group_bindings (
+    group_id TEXT PRIMARY KEY,
+    owner_id TEXT,
+    bound_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )""")
 
 # 翻译缓存（表存在即可，实际只用内存缓存避免并发锁）
