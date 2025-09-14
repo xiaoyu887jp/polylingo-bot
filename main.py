@@ -16,12 +16,13 @@ from urllib3.util.retry import Retry
 from concurrent.futures import ThreadPoolExecutor
 from linebot import LineBotApi  # 仅为兼容保留，不直接使用
 
+# ===================== DB 连接 =====================
 DATABASE_URL = os.getenv("DATABASE_URL")
 conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-conn.autocommit = True
+conn.autocommit = False   # ❗ 必须 False，才能手动 BEGIN/COMMIT
 cur = conn.cursor()
 
-# ===================== HTTP 会话池（更稳更快） =====================
+# ===================== HTTP 会话池 =====================
 HTTP = requests.Session()
 HTTP.headers.update({"Connection": "keep-alive"})
 retry = Retry(
@@ -37,16 +38,27 @@ HTTP.mount("https://", HTTPAdapter(pool_connections=50, pool_maxsize=100, max_re
 HTTP.mount("http://",  HTTPAdapter(pool_connections=25, pool_maxsize=50,  max_retries=retry))
 
 # ===================== 环境变量 =====================
-LINE_CHANNEL_ACCESS_TOKEN = (
-    os.getenv("LINE_ACCESS_TOKEN")
-    or os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-    or "<LINE_CHANNEL_ACCESS_TOKEN>"
-)
-LINE_CHANNEL_SECRET = (
-    os.getenv("LINE_CHANNEL_SECRET")
-    or os.getenv("LINE_SECRET")
-    or "<LINE_CHANNEL_SECRET>"
-)
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_ACCESS_TOKEN") or os.getenv("LINE_CHANNEL_ACCESS_TOKEN") or "<LINE_CHANNEL_ACCESS_TOKEN>"
+LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET") or os.getenv("LINE_SECRET") or "<LINE_CHANNEL_SECRET>"
+BUY_URL_BASE = "https://saygo-translator.carrd.co"
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "<STRIPE_WEBHOOK_SECRET>")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+
+if not GOOGLE_API_KEY:
+    logging.warning("GOOGLE_API_KEY is not set. Translation will fail.")
+
+ALWAYS_USER_AVATAR = True
+BOT_AVATAR_FALLBACK = "https://i.imgur.com/sTqykvy.png"
+
+PLANS = {
+    'Free':    {'quota': 5000,    'max_groups': 0},
+    'Starter': {'quota': 300000,  'max_groups': 1},
+    'Basic':   {'quota': 1000000, 'max_groups': 3},
+    'Pro':     {'quota': 2000000, 'max_groups': 5},
+    'Expert':  {'quota': 4000000, 'max_groups': 10}
+}
+RESET_ALIASES = {"/re", "/reset", "/resetlang"}
+
 # ===================== 购买链接 =====================
 BUY_URL_BASE = "https://saygo-translator.carrd.co"
 
