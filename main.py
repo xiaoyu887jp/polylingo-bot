@@ -6,7 +6,7 @@ import hmac
 import base64
 import hashlib
 import logging
-import sqlite3
+import psycopg2
 import html
 import requests
 from typing import Optional
@@ -15,6 +15,11 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from concurrent.futures import ThreadPoolExecutor
 from linebot import LineBotApi  # 仅为兼容保留，不直接使用
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+conn = psycopg2.connect(DATABASE_URL)
+cur = conn.cursor()
+
 
 # ===================== HTTP 会话池（更稳更快） =====================
 HTTP = requests.Session()
