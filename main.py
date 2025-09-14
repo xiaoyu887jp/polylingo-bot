@@ -338,45 +338,58 @@ def guess_source_lang(s: str) -> Optional[str]:
         if 0x0E00 <= cp <= 0x0E7F: return "th"
     return None
 
-# -------- 原子扣减（沿用新程序）--------
+# -------- 原子扣减（PostgreSQL 版本）--------
 def atomic_deduct_group_quota(group_id: str, amount: int) -> bool:
     try:
-        conn.execute("BEGIN IMMEDIATE")
-        cur.execute("SELECT plan_remaining FROM groups WHERE group_id=?", (group_id,))
+        cur.execute("BEGIN")  # PostgreSQL 用 BEGIN，不支持 "BEGIN IMMEDIATE"
+        cur.execute("SELECT plan_remaining FROM groups WHERE group_id=%s FOR UPDATE", (group_id,))
         row = cur.fetchone()
         if not row or (row[0] is None) or (row[0] < amount):
-            conn.execute("ROLLBACK")
+            conn.rollback()
             return False
-        cur.execute("UPDATE groups SET plan_remaining = plan_remaining - ? WHERE group_id=?",
-                    (amount, group_id))
+        cur.execute(
+            "UPDATE groups SET plan_remaining = plan_remaining - %s WHERE group_id=%s",
+            (amount, group_id),
+        )
         conn.commit()
         return True
-    except sqlite3.OperationalError:
-        conn.execute("ROLLBACK")
+    except Exception:
+        conn.rollback()
         return False
+
 
 def atomic_deduct_user_free_quota(user_id: str, amount: int):
     try:
-        conn.execute("BEGIN IMMEDIATE")
-        cur.execute("SELECT free_remaining FROM users WHERE user_id=?", (user_id,))
+        cur.execute("BEGIN")
+        cur.execute("SELECT free_remaining FROM users WHERE user_id=%s FOR UPDATE", (user_id,))
         row = cur.fetchone()
         if not row:
             free_total = PLANS['Free']['quota']
             if amount > free_total:
-                conn.execute("ROLLBACK"); return (False, 0)
+                conn.rollback()
+                return (False, 0)
             remaining = free_total - amount
-            cur.execute("INSERT INTO users (user_id, free_remaining) VALUES (?, ?)", (user_id, remaining))
+            cur.execute(
+                "INSERT INTO users (user_id, free_remaining) VALUES (%s, %s)",
+                (user_id, remaining),
+            )
             conn.commit()
             return (True, remaining)
+
         free_remaining = row[0] or 0
         if free_remaining < amount:
-            conn.execute("ROLLBACK"); return (False, free_remaining)
-        cur.execute("UPDATE users SET free_remaining = free_remaining - ? WHERE user_id=?",
-                    (amount, user_id))
+            conn.rollback()
+            return (False, free_remaining)
+
+        cur.execute(
+            "UPDATE users SET free_remaining = free_remaining - %s WHERE user_id=%s",
+            (amount, user_id),
+        )
         conn.commit()
         return (True, free_remaining - amount)
-    except sqlite3.OperationalError:
-        conn.execute("ROLLBACK"); return (False, 0)
+    except Exception:
+        conn.rollback()
+        return (False, 0)
 
 # ===================== Flask 应用 =====================
 app = Flask(__name__)
