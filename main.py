@@ -710,7 +710,7 @@ def stripe_webhook():
     if etype == "checkout.session.completed":
         obj = (event.get("data", {}) or {}).get("object", {}) or {}
 
-        user_id  = obj.get("client_reference_id")     # Checkout 中传的 line_id
+        user_id  = obj.get("client_reference_id")     # Checkout 里传的 line_id
         sub_id   = obj.get("subscription")
         md       = obj.get("metadata") or {}
         plan_name = (md.get("plan") or "").strip().capitalize()
@@ -724,9 +724,10 @@ def stripe_webhook():
         quota      = PLANS[plan_name]["quota"]
 
         # 计算套餐到期时间（UTC + 30天）
+        import datetime
         expires_at = (datetime.datetime.utcnow() + datetime.timedelta(days=30)).isoformat()
 
-        # 1) 写入 / 更新用户套餐（注意：你已在 init_db.py 创建 user_plans 表）
+        # 1) 写入 / 更新用户套餐
         cur.execute(
             """INSERT OR REPLACE INTO user_plans
                (user_id, plan_type, max_groups, subscription_id)
@@ -735,9 +736,9 @@ def stripe_webhook():
         )
         conn.commit()
 
-        # 2) 如果有 group_id，绑定群并写入额度 + 到期日
+        # 2) 如果有 group_id，绑定群并充值额度 + 到期日
         if group_id:
-            # 2.1 该群是否已被别人绑定
+            # 2.1 检查该群是否已经被别人绑定
             cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=?", (group_id,))
             row = cur.fetchone()
             if row and row[0] and row[0] != user_id:
@@ -747,20 +748,24 @@ def stripe_webhook():
                     f"⚠️ Group {group_id} is already bound to another account."
                 )
             else:
-                # 2.2 检查当前用户已绑定群数量
+                # 2.2 校验用户群数是否超限
                 cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,))
                 used = cur.fetchone()[0] or 0
 
                 if row or (max_groups is None) or (used < max_groups):
-                    # 未绑定则插入绑定关系
+                    # 插入 group_bindings
                     if not row:
-                        cur.execute("INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)", (group_id, user_id))
+                        cur.execute(
+                            "INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)",
+                            (group_id, user_id)
+                        )
                         conn.commit()
 
-                    # 将群套餐写入/更新（重置额度；如需“续费叠加”，先查现值再相加）
+                    # 插入 groups（额度 + 到期日）
                     cur.execute(
-                        "INSERT OR REPLACE INTO groups (group_id, plan_type, plan_owner, plan_remaining, expires_at) "
-                        "VALUES (?, ?, ?, ?, ?)",
+                        """INSERT OR REPLACE INTO groups 
+                           (group_id, plan_type, plan_owner, plan_remaining, expires_at)
+                           VALUES (?, ?, ?, ?, ?)""",
                         (group_id, plan_name, user_id, quota, expires_at),
                     )
                     conn.commit()
