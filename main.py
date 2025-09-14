@@ -508,14 +508,12 @@ def line_webhook():
                     # 已绑定的群数（必须按 owner_id 过滤）
                     cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,))
                     used = cur.fetchone()[0] or 0
-                   
 
                     # 该群是否已存在
                     cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=?", (group_id,))
                     exists = cur.fetchone()
 
                     if exists:
-                        # 已经有人绑定
                         if exists[0] == user_id:
                             msg = "该群已在你的套餐名下。"
                         else:
@@ -523,7 +521,6 @@ def line_webhook():
                         send_reply_message(reply_token, [{"type": "text", "text": msg}])
                         continue
 
-                    # 限额校验（None 表示不限额）
                     if (max_groups is None) or (used < max_groups):
                         try:
                             cur.execute(
@@ -536,7 +533,6 @@ def line_webhook():
                             msg = "⚠️ 并发冲突，该群已被绑定。"
                         send_reply_message(reply_token, [{"type": "text", "text": msg}])
                     else:
-                        # 群数已满 → 明确提示用户
                         send_reply_message(reply_token, [{
                             "type": "text",
                             "text": f"⚠️ 你的套餐最多可綁定 {max_groups} 個群組。請在舊群輸入 /unbind 解除綁定，或升級套餐。"
@@ -549,33 +545,30 @@ def line_webhook():
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}])
                 continue
 
-
             # B3) 非群聊不翻译
             if not group_id:
                 continue
 
-            # B4) 收集发言者在本群配置的目标语言，过滤掉与原文同语种
+            # B4) 收集发言者在本群配置的目标语言
             cur.execute("SELECT target_lang FROM user_prefs WHERE group_id=? AND user_id=?", (group_id, user_id))
             configured = [row[0].lower() for row in cur.fetchall() if row and row[0]]
             configured = list(dict.fromkeys(configured))
             if not configured:
                 tip = ("請先為【你自己】設定翻譯語言，輸入 /re /reset /resetlang 會出現語言卡片。\n"
                        "Set your language with /re.")
-            # 猜原文语种
-            src_hint = guess_source_lang(text)
-            targets = [tl for tl in configured if (not src_hint or tl != src_hint)]
-            if not configured:
                 send_reply_message(reply_token, [{"type": "text", "text": tip}])
                 continue
-            if not targets:
-                continue  # 配置的语言刚好都等于原文语种，本次不翻译
 
-            # 一次性拿头像/昵称
+            src_hint = guess_source_lang(text)
+            targets = [tl for tl in configured if (not src_hint or tl != src_hint)]
+            if not targets:
+                continue
+
             profile = get_user_profile_cached(user_id, group_id) or {}
             icon = profile.get("pictureUrl") or BOT_AVATAR_FALLBACK
             display_name = (profile.get("displayName") or "User")[:20]
 
-            # B5) 翻译：单语快路径，多语并发，传入源语种提示
+            # B5) 翻译
             t0 = time.perf_counter()
             translations = []
             if len(targets) == 1:
@@ -594,11 +587,25 @@ def line_webhook():
                             translations.append((tl, txt))
             logging.info(f"[translate] langs={len(targets)} elapsed_ms={(time.perf_counter()-t0)*1000:.1f}")
 
-            # B6) 扣费
+            # B6) 扣费 + 检查过期
             chars_used = len(text) * max(1, len(translations))
-            cur.execute("SELECT plan_type, plan_remaining, plan_owner FROM groups WHERE group_id=?", (group_id,))
+            cur.execute("SELECT plan_type, plan_remaining, plan_owner, expires_at FROM groups WHERE group_id=?", (group_id,))
             group_plan = cur.fetchone()
             if group_plan:
+                plan_type, plan_remaining, plan_owner, expires_at = group_plan
+                if expires_at:
+                    import datetime
+                    try:
+                        if datetime.datetime.utcnow() > datetime.datetime.fromisoformat(expires_at):
+                            buy_url = build_buy_link(user_id, group_id)
+                            send_reply_message(reply_token, [{
+                                "type": "text",
+                                "text": f"⚠️ 套餐已到期，請重新購買。\nPlan expired. Please renew:\n{buy_url}"
+                            }])
+                            continue
+                    except Exception as e:
+                        logging.warning(f"expires_at parse failed: {e}")
+
                 if not atomic_deduct_group_quota(group_id, chars_used):
                     alert = build_group_quota_alert(user_id, group_id)
                     send_reply_message(reply_token, [
@@ -606,7 +613,6 @@ def line_webhook():
                         {"type": "text", "text": build_buy_link(user_id, group_id)}
                     ])
                     continue
-                 
             else:
                 ok, _remain = atomic_deduct_user_free_quota(user_id, chars_used)
                 if not ok:
@@ -617,7 +623,7 @@ def line_webhook():
                     ])
                     continue
 
-            # B7) 发送（沿用你“用个人头像”的体验）
+            # B7) 发送
             sender_icon = icon if ALWAYS_USER_AVATAR else BOT_AVATAR_FALLBACK
             messages = []
             for lang_code, txt in translations:
@@ -627,9 +633,9 @@ def line_webhook():
                     "sender": {"name": f"{display_name} ({lang_code})"[:20], "iconUrl": sender_icon}
                 })
             if messages:
-                send_reply_message(reply_token, messages[:5])  # LINE 每次最多 5 条
+                send_reply_message(reply_token, messages[:5])
 
-        # C) 旧卡 postback：data=lang=xx
+        # C) 旧卡 postback
         if etype == "postback":
             data_pb = (event.get("postback", {}) or {}).get("data", "")
             if data_pb.startswith("lang="):
@@ -640,21 +646,18 @@ def line_webhook():
                 )
                 conn.commit()
 
-                # 套餐绑定
                 cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=?", (user_id,))
                 plan = cur.fetchone()
                 if plan:
                     plan_type, max_groups = plan
                     cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,))
-
                     used = cur.fetchone()[0]
                     if used < (max_groups or 0):
                         cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=?", (group_id,))
                         exists = cur.fetchone()
                         if not exists:
-                            quota = PLANS.get(plan_type, {}).get('quota', 0)
                             cur.execute(
-                               "INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)",
+                                "INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)",
                                 (group_id, user_id)
                             )
                             conn.commit()
@@ -663,7 +666,6 @@ def line_webhook():
                                  f"Current plan allows up to {max_groups} groups. Please upgrade for more.")
                         send_reply_message(reply_token, [{"type": "text", "text": alert}])
 
-                # 回显本人在本群全部语言
                 cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=? AND group_id=?", (user_id, group_id))
                 my_langs = [r[0] for r in cur.fetchall()] or [lang_code]
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}])
