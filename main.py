@@ -710,7 +710,7 @@ def stripe_webhook():
     if etype == "checkout.session.completed":
         obj = (event.get("data", {}) or {}).get("object", {}) or {}
 
-        user_id  = obj.get("client_reference_id")     # Checkout 里传的 line_id
+        user_id  = obj.get("client_reference_id")     # Checkout 中传的 line_id
         sub_id   = obj.get("subscription")
         md       = obj.get("metadata") or {}
         plan_name = (md.get("plan") or "").strip().capitalize()
@@ -723,7 +723,10 @@ def stripe_webhook():
         max_groups = PLANS[plan_name]["max_groups"]
         quota      = PLANS[plan_name]["quota"]
 
-        # 1) 写入 / 更新用户套餐
+        # 计算套餐到期时间（UTC + 30天）
+        expires_at = (datetime.datetime.utcnow() + datetime.timedelta(days=30)).isoformat()
+
+        # 1) 写入 / 更新用户套餐（注意：你已在 init_db.py 创建 user_plans 表）
         cur.execute(
             """INSERT OR REPLACE INTO user_plans
                (user_id, plan_type, max_groups, subscription_id)
@@ -732,38 +735,50 @@ def stripe_webhook():
         )
         conn.commit()
 
-        # 2) 如果有 group_id，绑定群并充值额度
+        # 2) 如果有 group_id，绑定群并写入额度 + 到期日
         if group_id:
-            # 2.1 检查该群是否已经被绑定
+            # 2.1 该群是否已被别人绑定
             cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=?", (group_id,))
             row = cur.fetchone()
             if row and row[0] and row[0] != user_id:
-                # 已被别人绑定
-                send_push_text(user_id, f"⚠️ 群 {group_id} 已绑定到其他账号，无法重复绑定。")
+                send_push_text(
+                    user_id,
+                    f"⚠️ 群 {group_id} 已绑定到其他账号，无法重复绑定。\n"
+                    f"⚠️ Group {group_id} is already bound to another account."
+                )
             else:
-                # 2.2 校验用户群数是否超限
+                # 2.2 检查当前用户已绑定群数量
                 cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,))
                 used = cur.fetchone()[0] or 0
 
                 if row or (max_groups is None) or (used < max_groups):
-                    # 插入 group_bindings
+                    # 未绑定则插入绑定关系
                     if not row:
                         cur.execute("INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)", (group_id, user_id))
                         conn.commit()
 
-                    # 插入 groups（额度）
+                    # 将群套餐写入/更新（重置额度；如需“续费叠加”，先查现值再相加）
                     cur.execute(
-                        "INSERT OR REPLACE INTO groups (group_id, plan_type, plan_owner, plan_remaining) VALUES (?, ?, ?, ?)",
-                        (group_id, plan_name, user_id, quota),
+                        "INSERT OR REPLACE INTO groups (group_id, plan_type, plan_owner, plan_remaining, expires_at) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (group_id, plan_name, user_id, quota, expires_at),
                     )
                     conn.commit()
 
-                    send_push_text(user_id, f"✅ {plan_name} 套餐已启用，群 {group_id} 获得 {quota} 字额度。")
+                    send_push_text(
+                        user_id,
+                        f"✅ {plan_name} 套餐已启用，群 {group_id} 获得 {quota} 字额度，有效期至 {expires_at} (UTC)。\n\n"
+                        f"✅ {plan_name} plan activated. Group {group_id} has {quota} characters. Valid until {expires_at} (UTC)."
+                    )
                 else:
-                    send_push_text(user_id, f"⚠️ 你的套餐最多可绑定 {max_groups} 个群，已达上限，无法激活新群。")
+                    notify_group_limit(user_id, group_id, max_groups)
         else:
             # 没有群 id，只激活用户套餐
-            send_push_text(user_id, f"✅ {plan_name} 套餐已启用，可在群里输入 /re 来设置翻译语言。")
+            send_push_text(
+                user_id,
+                f"✅ {plan_name} 套餐已启用。将机器人加入群后，输入 /re 设置翻译语言。\n\n"
+                f"✅ {plan_name} plan activated. After adding the bot to a group, type /re to set languages."
+            )
 
     return "OK"
 
