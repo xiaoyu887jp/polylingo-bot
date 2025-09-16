@@ -485,8 +485,23 @@ def atomic_deduct_user_free_quota(user_id: str, amount: int):
 app = Flask(__name__)
 
 # ---------------- LINE Webhook ----------------
+from psycopg2 import extensions
+
+def _ensure_tx_clean():
+    try:
+        if conn.get_transaction_status() == extensions.TRANSACTION_STATUS_INERROR:
+            logging.warning("[tx] in error state, auto-rollback.")
+            conn.rollback()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
 @app.route("/callback", methods=["POST"])
 def line_webhook():
+    _ensure_tx_clean()   # ★ 每次请求进来先清理事务状态
+
     # 校验签名
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(as_text=True)
@@ -504,7 +519,7 @@ def line_webhook():
         group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
 
-        # A0) 初始化免费额度（只在用户第一次使用时插入，或者没额度时重置）
+        # A0) 初始化免费额度
         if user_id:
             try:
                 cur.execute("""
@@ -519,7 +534,7 @@ def line_webhook():
                 logging.error(f"[init free quota] failed: {e}")
                 conn.rollback()
 
-        # A) 机器人被拉入群：清理旧设定并发语言卡
+        # A) 机器人被拉入群
         if etype == "join":
             if group_id:
                 try:
@@ -536,7 +551,6 @@ def line_webhook():
             }])
             continue
 
-        # 新成员加入：只发卡，不清空全群
         if etype == "memberJoined":
             continue
 
@@ -560,7 +574,20 @@ def line_webhook():
                 }])
                 continue
 
-            # B2) 语言按钮：更新发言者的语言，并尝试绑定群套餐
+            # B1.5) /unbind 解除群绑定
+            if text.strip().lower() == "/unbind" and group_id:
+                try:
+                    cur.execute("DELETE FROM group_bindings WHERE group_id=%s AND owner_id=%s", (group_id, user_id))
+                    cur.execute("DELETE FROM groups WHERE group_id=%s", (group_id,))
+                    conn.commit()
+                    send_reply_message(reply_token, [{"type":"text","text":"✅ 已解除綁定，本群將使用個人免費額度。"}])
+                except Exception as e:
+                    conn.rollback()
+                    logging.error(f"[unbind] {e}")
+                    send_reply_message(reply_token, [{"type":"text","text":"❌ 解除綁定失敗，請稍後再試。"}])
+                continue
+
+            # B2) 语言按钮
             LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
             tnorm = text.strip().lower()
             if tnorm in LANG_CODES:
@@ -576,7 +603,7 @@ def line_webhook():
                     logging.error(f"[insert user_prefs] {e}")
                     conn.rollback()
 
-                # ===== 群绑定套餐逻辑 =====
+                # 群绑定套餐逻辑
                 try:
                     cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=%s", (user_id,))
                     row = cur.fetchone()
@@ -589,7 +616,6 @@ def line_webhook():
                     try:
                         cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
                         used = cur.fetchone()[0] or 0
-
                         cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
                         exists = cur.fetchone()
 
@@ -613,17 +639,16 @@ def line_webhook():
                         logging.error(f"[group binding] {e}")
                         conn.rollback()
 
-                # 回覆當前語言設置
                 cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
                 my_langs = [r[0] for r in cur.fetchall()] or [lang_code]
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}])
                 continue
 
-            # B3) 非群聊不翻译
+            # B3) 非群聊
             if not group_id:
                 continue
 
-            # B4) 收集发言者在本群配置的目标语言
+            # B4) 收集语言
             cur.execute("SELECT target_lang FROM user_prefs WHERE group_id=%s AND user_id=%s", (group_id, user_id))
             configured = [row[0].lower() for row in cur.fetchall() if row and row[0]]
             configured = list(dict.fromkeys(configured))
@@ -660,30 +685,31 @@ def line_webhook():
                             translations.append((tl, txt))
             logging.info(f"[translate] langs={len(targets)} elapsed_ms={(time.perf_counter()-t0)*1000:.1f}")
 
-            # B6) 扣费 + 检查过期
+            # B6) 扣费 + 回落逻辑
             chars_used = len(text) * max(1, len(translations))
             cur.execute("SELECT plan_type, plan_remaining, plan_owner, expires_at FROM groups WHERE group_id=%s", (group_id,))
             group_plan = cur.fetchone()
+
+            used_paid = False
             if group_plan:
                 plan_type, plan_remaining, plan_owner, expires_at = group_plan
+                expired = False
                 if expires_at:
                     import datetime
                     try:
-                        if datetime.datetime.utcnow() > datetime.datetime.fromisoformat(expires_at):
-                            buy_url = build_buy_link(user_id, group_id)
-                            send_reply_message(reply_token, [{"type": "text", "text": f"⚠️ 套餐已到期，請重新購買。\nPlan expired. Please renew:\n{buy_url}"}])
-                            continue
+                        expired = datetime.datetime.utcnow() > datetime.datetime.fromisoformat(expires_at)
                     except Exception as e:
                         logging.warning(f"expires_at parse failed: {e}")
 
-                if not atomic_deduct_group_quota(group_id, chars_used):
-                    alert = build_group_quota_alert(user_id, group_id)
-                    send_reply_message(reply_token, [
-                        {"type": "text", "text": alert},
-                        {"type": "text", "text": build_buy_link(user_id, group_id)}
-                    ])
-                    continue
-            else:
+                if not expired:
+                    if atomic_deduct_group_quota(group_id, chars_used):
+                        used_paid = True
+                if not used_paid and expired:
+                    send_reply_message(reply_token, [{"type":"text","text":"⚠️ 群套餐已過期，改用個人免費額度。"}])
+                elif not used_paid and plan_remaining is not None and plan_remaining < chars_used:
+                    send_reply_message(reply_token, [{"type":"text","text":"ℹ️ 本群額度不足，改用個人免費額度。"}])
+
+            if not used_paid:
                 ok, _remain = atomic_deduct_user_free_quota(user_id, chars_used)
                 if not ok:
                     alert = build_free_quota_alert(user_id, group_id)
@@ -740,124 +766,6 @@ def line_webhook():
                 cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
                 my_langs = [r[0] for r in cur.fetchall()] or [lang_code]
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}])
-
-    return "OK"
-
-
-# ---------------- Stripe Webhook ----------------
-@app.route("/stripe-webhook", methods=["POST"])
-def stripe_webhook():
-    payload = request.get_data(as_text=False)  # 原始字节
-    sig_header = request.headers.get("Stripe-Signature", "")
-
-    # 校验签名
-    if STRIPE_WEBHOOK_SECRET:
-        try:
-            ts, v1 = None, None
-            for part in sig_header.split(","):
-                k, v = part.split("=", 1)
-                if k == "t":
-                    ts = v
-                elif k == "v1":
-                    v1 = v
-            if not (ts and v1):
-                abort(400)
-            signed = f"{ts}.{payload.decode('utf-8')}"
-            expected = hmac.new(
-                STRIPE_WEBHOOK_SECRET.encode("utf-8"),
-                signed.encode("utf-8"),
-                hashlib.sha256,
-            ).hexdigest()
-            if not hmac.compare_digest(expected, v1):
-                abort(400)
-        except Exception:
-            abort(400)
-
-    # 解析事件
-    try:
-        event = json.loads(payload.decode("utf-8"))
-    except Exception:
-        abort(400)
-
-    etype = event.get("type")
-
-    if etype == "checkout.session.completed":
-        obj = (event.get("data", {}) or {}).get("object", {}) or {}
-
-        user_id  = obj.get("client_reference_id")     # Checkout 里传的 line_id
-        sub_id   = obj.get("subscription")
-        md       = obj.get("metadata") or {}
-        plan_name = (md.get("plan") or "").strip().capitalize()
-        group_id  = md.get("group_id")
-
-        # 无效计划或无 user_id → 忽略
-        if (not user_id) or (plan_name not in PLANS):
-            return "OK"
-
-        max_groups = PLANS[plan_name]["max_groups"]
-        quota      = PLANS[plan_name]["quota"]
-
-        # 计算套餐到期时间（UTC + 30天）
-        import datetime
-        expires_at = (datetime.datetime.utcnow() + datetime.timedelta(days=30)).isoformat()
-
-        # 1) 写入 / 更新用户套餐
-        cur.execute(
-            """INSERT OR REPLACE INTO user_plans
-               (user_id, plan_type, max_groups, subscription_id)
-               VALUES (?, ?, ?, ?)""",
-            (user_id, plan_name, max_groups, sub_id),
-        )
-        conn.commit()
-
-        # 2) 如果有 group_id，绑定群并充值额度 + 到期日
-        if group_id:
-            # 2.1 检查该群是否已经被别人绑定
-            cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=?", (group_id,))
-            row = cur.fetchone()
-            if row and row[0] and row[0] != user_id:
-                send_push_text(
-                    user_id,
-                    f"⚠️ 群 {group_id} 已绑定到其他账号，无法重复绑定。\n"
-                    f"⚠️ Group {group_id} is already bound to another account."
-                )
-            else:
-                # 2.2 校验用户群数是否超限
-                cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,))
-                used = cur.fetchone()[0] or 0
-
-                if row or (max_groups is None) or (used < max_groups):
-                    # 插入 group_bindings
-                    if not row:
-                        cur.execute(
-                            "INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)",
-                            (group_id, user_id)
-                        )
-                        conn.commit()
-
-                    # 插入 groups（额度 + 到期日）
-                    cur.execute(
-                        """INSERT OR REPLACE INTO groups 
-                           (group_id, plan_type, plan_owner, plan_remaining, expires_at)
-                           VALUES (?, ?, ?, ?, ?)""",
-                        (group_id, plan_name, user_id, quota, expires_at),
-                    )
-                    conn.commit()
-
-                    send_push_text(
-                        user_id,
-                        f"✅ {plan_name} 套餐已启用，群 {group_id} 获得 {quota} 字额度，有效期至 {expires_at} (UTC)。\n\n"
-                        f"✅ {plan_name} plan activated. Group {group_id} has {quota} characters. Valid until {expires_at} (UTC)."
-                    )
-                else:
-                    notify_group_limit(user_id, group_id, max_groups)
-        else:
-            # 没有群 id，只激活用户套餐
-            send_push_text(
-                user_id,
-                f"✅ {plan_name} 套餐已启用。将机器人加入群后，输入 /re 设置翻译语言。\n\n"
-                f"✅ {plan_name} plan activated. After adding the bot to a group, type /re to set languages."
-            )
 
     return "OK"
 
