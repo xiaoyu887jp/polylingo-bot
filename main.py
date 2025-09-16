@@ -429,7 +429,7 @@ def line_webhook():
         # A) 机器人被拉入群：清理旧设定并发语言卡
         if etype == "join":
             if group_id:
-                cur.execute("DELETE FROM user_prefs WHERE group_id=?", (group_id,))
+                cur.execute("DELETE FROM user_prefs WHERE group_id=%s", (group_id,))
                 conn.commit()
             flex = build_language_selection_flex()
             send_reply_message(reply_token, [{
@@ -449,7 +449,7 @@ def line_webhook():
 
             # B1) 重置
             if is_reset_command(text):
-                cur.execute("DELETE FROM user_prefs WHERE group_id=?", (group_id,))
+                cur.execute("DELETE FROM user_prefs WHERE group_id=%s", (group_id,))
                 conn.commit()
                 flex = build_language_selection_flex()
                 send_reply_message(reply_token, [{
@@ -465,24 +465,25 @@ def line_webhook():
             if tnorm in LANG_CODES:
                 lang_code = tnorm
                 # 保存语言偏好
-                cur.execute(
-                    "INSERT OR IGNORE INTO user_prefs (user_id, group_id, target_lang) VALUES (?, ?, ?)",
-                    (user_id, group_id, lang_code)
-                )
+                cur.execute("""
+                INSERT INTO user_prefs (user_id, group_id, target_lang)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
+                """, (user_id, group_id, lang_code))
                 conn.commit()
 
                 # ===== 新增：綁定群到套餐 =====
-                cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=?", (user_id,))
+                cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=%s", (user_id,))
                 row = cur.fetchone()
                 if row:
                     plan_type, max_groups = row
 
                     # 已绑定的群数（必须按 owner_id 过滤）
-                    cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,))
+                    cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
                     used = cur.fetchone()[0] or 0
 
                     # 该群是否已存在
-                    cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=?", (group_id,))
+                    cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
                     exists = cur.fetchone()
 
                     if exists:
@@ -496,12 +497,12 @@ def line_webhook():
                     if (max_groups is None) or (used < max_groups):
                         try:
                             cur.execute(
-                                "INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)",
+                                "INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s)",
                                 (group_id, user_id)
                             )
                             conn.commit()
                             msg = "✅ 群绑定成功。"
-                        except sqlite3.IntegrityError:
+                        except Exception:
                             msg = "⚠️ 并发冲突，该群已被绑定。"
                         send_reply_message(reply_token, [{"type": "text", "text": msg}])
                     else:
@@ -512,7 +513,7 @@ def line_webhook():
                     continue
 
                 # 回覆當前語言設置
-                cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=? AND group_id=?", (user_id, group_id))
+                cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
                 my_langs = [r[0] for r in cur.fetchall()] or [lang_code]
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}])
                 continue
@@ -522,7 +523,7 @@ def line_webhook():
                 continue
 
             # B4) 收集发言者在本群配置的目标语言
-            cur.execute("SELECT target_lang FROM user_prefs WHERE group_id=? AND user_id=?", (group_id, user_id))
+            cur.execute("SELECT target_lang FROM user_prefs WHERE group_id=%s AND user_id=%s", (group_id, user_id))
             configured = [row[0].lower() for row in cur.fetchall() if row and row[0]]
             configured = list(dict.fromkeys(configured))
             if not configured:
@@ -561,7 +562,7 @@ def line_webhook():
 
             # B6) 扣费 + 检查过期
             chars_used = len(text) * max(1, len(translations))
-            cur.execute("SELECT plan_type, plan_remaining, plan_owner, expires_at FROM groups WHERE group_id=?", (group_id,))
+            cur.execute("SELECT plan_type, plan_remaining, plan_owner, expires_at FROM groups WHERE group_id=%s", (group_id,))
             group_plan = cur.fetchone()
             if group_plan:
                 plan_type, plan_remaining, plan_owner, expires_at = group_plan
@@ -612,24 +613,25 @@ def line_webhook():
             data_pb = (event.get("postback", {}) or {}).get("data", "")
             if data_pb.startswith("lang="):
                 lang_code = data_pb.split("=", 1)[1]
-                cur.execute(
-                    "INSERT OR IGNORE INTO user_prefs (user_id, group_id, target_lang) VALUES (?, ?, ?)",
-                    (user_id, group_id, lang_code)
-                )
+                cur.execute("""
+                INSERT INTO user_prefs (user_id, group_id, target_lang)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
+                """, (user_id, group_id, lang_code))
                 conn.commit()
 
-                cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=?", (user_id,))
+                cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=%s", (user_id,))
                 plan = cur.fetchone()
                 if plan:
                     plan_type, max_groups = plan
-                    cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=?", (user_id,))
+                    cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
                     used = cur.fetchone()[0]
                     if used < (max_groups or 0):
-                        cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=?", (group_id,))
+                        cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
                         exists = cur.fetchone()
                         if not exists:
                             cur.execute(
-                                "INSERT INTO group_bindings (group_id, owner_id) VALUES (?, ?)",
+                                "INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s)",
                                 (group_id, user_id)
                             )
                             conn.commit()
@@ -638,7 +640,7 @@ def line_webhook():
                                  f"Current plan allows up to {max_groups} groups. Please upgrade for more.")
                         send_reply_message(reply_token, [{"type": "text", "text": alert}])
 
-                cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=? AND group_id=?", (user_id, group_id))
+                cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
                 my_langs = [r[0] for r in cur.fetchall()] or [lang_code]
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}])
 
