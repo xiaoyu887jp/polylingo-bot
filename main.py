@@ -522,7 +522,7 @@ def line_webhook():
         group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
 
-        # A0) 初始化免费额度
+        # A0) 初始化免费额度（首次或为 0 时重置为 Free 的 quota）
         if user_id:
             try:
                 cur.execute("""
@@ -537,7 +537,7 @@ def line_webhook():
                 logging.error(f"[init free quota] failed: {e}")
                 conn.rollback()
 
-        # A) 机器人被拉入群
+        # A) 机器人被拉入群：清理旧设定并发语言卡
         if etype == "join":
             if group_id:
                 try:
@@ -554,6 +554,7 @@ def line_webhook():
             }])
             continue
 
+        # 新成员加入：只发卡，不清空全群
         if etype == "memberJoined":
             continue
 
@@ -577,7 +578,7 @@ def line_webhook():
                 }])
                 continue
 
-            # B1.5) /unbind 解除群绑定
+            # B1.5) /unbind 解除群绑定（可选：此处仍是中文提示）
             if text.strip().lower() == "/unbind" and group_id:
                 try:
                     cur.execute("DELETE FROM group_bindings WHERE group_id=%s AND owner_id=%s", (group_id, user_id))
@@ -590,7 +591,7 @@ def line_webhook():
                     send_reply_message(reply_token, [{"type":"text","text":"❌ 解除綁定失敗，請稍後再試。"}])
                 continue
 
-            # B2) 语言按钮
+            # B2) 语言按钮：更新发言者的语言，并尝试绑定群套餐
             LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
             tnorm = text.strip().lower()
             if tnorm in LANG_CODES:
@@ -647,11 +648,11 @@ def line_webhook():
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}])
                 continue
 
-            # B3) 非群聊
+            # B3) 非群聊不翻译
             if not group_id:
                 continue
 
-            # B4) 收集语言
+            # B4) 收集发言者在本群配置的目标语言
             cur.execute("SELECT target_lang FROM user_prefs WHERE group_id=%s AND user_id=%s", (group_id, user_id))
             configured = [row[0].lower() for row in cur.fetchall() if row and row[0]]
             configured = list(dict.fromkeys(configured))
@@ -688,7 +689,7 @@ def line_webhook():
                             translations.append((tl, txt))
             logging.info(f"[translate] langs={len(targets)} elapsed_ms={(time.perf_counter()-t0)*1000:.1f}")
 
-            # B6) 扣费 + 回落逻辑
+            # B6) 扣费 + 回落/中止逻辑（严格模式：用完即中止）
             chars_used = len(text) * max(1, len(translations))
             cur.execute("SELECT plan_type, plan_remaining, plan_owner, expires_at FROM groups WHERE group_id=%s", (group_id,))
             group_plan = cur.fetchone()
@@ -707,15 +708,22 @@ def line_webhook():
                 if not expired:
                     if atomic_deduct_group_quota(group_id, chars_used):
                         used_paid = True
+
+                # 群套餐过期 → 英文提示 + 购买链接 → 直接中止
                 if not used_paid and expired:
                     buy_url = build_buy_link(user_id, group_id)
                     msg = f"⚠️ Your group plan has expired. Please renew here:\n{buy_url}"
                     send_reply_message(reply_token, [{"type": "text", "text": msg}])
+                    continue
+
+                # 群额度不足 → 英文提示 + 购买链接 → 直接中止
                 elif not used_paid and plan_remaining is not None and plan_remaining < chars_used:
                     buy_url = build_buy_link(user_id, group_id)
                     msg = f"Your group quota is not enough. Please purchase more here:\n{buy_url}"
                     send_reply_message(reply_token, [{"type": "text", "text": msg}])
+                    continue
 
+            # 没有群套餐时，才走个人免费额度
             if not used_paid:
                 ok, _remain = atomic_deduct_user_free_quota(user_id, chars_used)
                 if not ok:
@@ -773,6 +781,7 @@ def line_webhook():
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}])
 
     return "OK"
+
 # ---------------- stripe-webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
