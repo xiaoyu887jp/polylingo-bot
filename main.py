@@ -238,6 +238,9 @@ def get_user_profile(user_id, group_id=None):
 PROFILE_CACHE = {}
 PROFILE_TTL = 300  # 秒
 
+# 翻译结果缓存（避免重复请求 Google API）
+translation_cache = {}
+
 def get_user_profile_cached(user_id, group_id=None):
     key = (user_id or "", group_id or "")
     now = time.time()
