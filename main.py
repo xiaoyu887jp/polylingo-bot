@@ -171,6 +171,8 @@ CREATE TABLE IF NOT EXISTS translations_cache (
 
 
 # ===================== 工具函数 =====================
+RESET_ALIASES = {"/re", "/reset", "/resetlang"}
+
 def first_token(s: str) -> str:
     if not s:
         return ""
@@ -178,8 +180,10 @@ def first_token(s: str) -> str:
     parts = t.split()
     return parts[0] if parts else ""
 
+
 def is_reset_command(s: str) -> bool:
     return first_token(s) in RESET_ALIASES
+
 
 def send_reply_message(reply_token, messages):
     headers = {
@@ -196,6 +200,7 @@ def send_reply_message(reply_token, messages):
     except Exception as e:
         logging.warning(f"[reply] failed: {e}")
 
+
 def send_push_text(to_id: str, text: str):
     headers = {
         "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
@@ -203,22 +208,29 @@ def send_push_text(to_id: str, text: str):
     }
     body = {"to": to_id, "messages": [{"type": "text", "text": text}]}
     try:
-        HTTP.post("https://api.line.me/v2/bot/message/push", headers=headers, json=body, timeout=5)
+        HTTP.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers=headers,
+            json=body,
+            timeout=5,
+        )
     except Exception as e:
         logging.warning(f"[push] failed: {e}")
+
 
 def is_friend(user_id: str):
     try:
         r = HTTP.get(
             f"https://api.line.me/v2/bot/friendship/status?userId={user_id}",
             headers={"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"},
-            timeout=5
+            timeout=5,
         )
         if r.status_code == 200:
             return bool(r.json().get("friendFlag"))
         return None
     except Exception:
         return None
+
 
 def get_user_profile(user_id, group_id=None):
     headers = {"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"}
@@ -234,12 +246,14 @@ def get_user_profile(user_id, group_id=None):
         pass
     return {}
 
+
 # 头像/昵称缓存，减少外部请求
 PROFILE_CACHE = {}
 PROFILE_TTL = 300  # 秒
 
 # 翻译结果缓存（避免重复请求 Google API）
 translation_cache = {}
+
 
 def get_user_profile_cached(user_id, group_id=None):
     key = (user_id or "", group_id or "")
@@ -251,6 +265,7 @@ def get_user_profile_cached(user_id, group_id=None):
     PROFILE_CACHE[key] = (now, prof)
     return prof
 
+
 def build_language_selection_flex():
     # 双列按钮卡（沿用你喜欢的设计）
     def card(label, code, bg):
@@ -261,36 +276,87 @@ def build_language_selection_flex():
             "backgroundColor": bg,
             "cornerRadius": "md",
             "paddingAll": "12px",
-            "contents": [{"type": "text", "text": label, "align": "center", "weight": "bold", "color": "#FFFFFF"}]
+            "contents": [
+                {
+                    "type": "text",
+                    "text": label,
+                    "align": "center",
+                    "weight": "bold",
+                    "color": "#FFFFFF",
+                }
+            ],
         }
+
     def row(l, r):
-        return {"type": "box", "layout": "horizontal", "spacing": "12px",
-                "contents": [{"type": "box", "layout": "vertical", "flex": 1, "contents": [l]},
-                             {"type": "box", "layout": "vertical", "flex": 1, "contents": [r]}]}
+        return {
+            "type": "box",
+            "layout": "horizontal",
+            "spacing": "12px",
+            "contents": [
+                {"type": "box", "layout": "vertical", "flex": 1, "contents": [l]},
+                {"type": "box", "layout": "vertical", "flex": 1, "contents": [r]},
+            ],
+        }
+
     rows = [
-        row(card("🇺🇸 English","en","#2E7D32"), card("🇨🇳 简体中文","zh-cn","#FF8A00")),
-        row(card("🇹🇼 繁體中文","zh-tw","#1976D2"), card("🇯🇵 日本語","ja","#D32F2F")),
-        row(card("🇰🇷 한국어","ko","#7B1FA2"), card("🇹🇭 ภาษาไทย","th","#F57C00")),
-        row(card("🇻🇳 Tiếng Việt","vi","#FF9933"), card("🇫🇷 Français","fr","#0097A7")),
-        row(card("🇪🇸 Español","es","#2E7D32"), card("🇩🇪 Deutsch","de","#1976D2")),
-        row(card("🇮🇩 Bahasa Indonesia","id","#2E7D32"), card("🇮🇳 हिन्दी","hi","#C62828")),
-        row(card("🇮🇹 Italiano","it","#43A047"), card("🇵🇹 Português","pt","#F57C00")),
-        row(card("🇷🇺 Русский","ru","#7B1FA2"), card("🇸🇦 العربية","ar","#D84315")),
+        row(card("🇺🇸 English", "en", "#2E7D32"), card("🇨🇳 简体中文", "zh-cn", "#FF8A00")),
+        row(card("🇹🇼 繁體中文", "zh-tw", "#1976D2"), card("🇯🇵 日本語", "ja", "#D32F2F")),
+        row(card("🇰🇷 한국어", "ko", "#7B1FA2"), card("🇹🇭 ภาษาไทย", "th", "#F57C00")),
+        row(card("🇻🇳 Tiếng Việt", "vi", "#FF9933"), card("🇫🇷 Français", "fr", "#0097A7")),
+        row(card("🇪🇸 Español", "es", "#2E7D32"), card("🇩🇪 Deutsch", "de", "#1976D2")),
+        row(card("🇮🇩 Bahasa Indonesia", "id", "#2E7D32"), card("🇮🇳 हिन्दी", "hi", "#C62828")),
+        row(card("🇮🇹 Italiano", "it", "#43A047"), card("🇵🇹 Português", "pt", "#F57C00")),
+        row(card("🇷🇺 Русский", "ru", "#7B1FA2"), card("🇸🇦 العربية", "ar", "#D84315")),
     ]
+
     footer = {
-        "type": "box", "layout": "vertical", "spacing": "8px",
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "8px",
         "contents": [
             {"type": "separator"},
-            {"type": "button","style":"secondary","height":"sm",
-             "action":{"type":"message","label":"🔄 Reset","text":"/resetlang"}},
-            {"type":"text","text":"Language Selection","wrap":True,"color":"#9CA3AF","size":"xs","align":"center"}
-        ]
+            {
+                "type": "button",
+                "style": "secondary",
+                "height": "sm",
+                "action": {"type": "message", "label": "🔄 Reset", "text": "/resetlang"},
+            },
+            {
+                "type": "text",
+                "text": "Language Selection",
+                "wrap": True,
+                "color": "#9CA3AF",
+                "size": "xs",
+                "align": "center",
+            },
+        ],
     }
-    return {"type":"bubble",
-            "header":{"type":"box","layout":"vertical","backgroundColor":"#FFE3B3",
-                      "contents":[{"type":"text","text":"🌍 Please select translation language",
-                                   "weight":"bold","size":"lg","align":"center","color":"#1F2937"}]},
-            "body":{"type":"box","layout":"vertical","spacing":"12px","contents":rows+[footer]}}
+
+    return {
+        "type": "bubble",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#FFE3B3",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "🌍 Please select translation language",
+                    "weight": "bold",
+                    "size": "lg",
+                    "align": "center",
+                    "color": "#1F2937",
+                }
+            ],
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "12px",
+            "contents": rows + [footer],
+        },
+    }
+
 
 def translate_text(text: str, target_lang: str, source_lang: Optional[str] = None):
     """
@@ -325,7 +391,9 @@ def translate_text(text: str, target_lang: str, source_lang: Optional[str] = Non
                 return None
             data = resp.json()
             trans_list = data["data"]["translations"]
-            translated_lines = [html.unescape(item.get("translatedText", "")) for item in trans_list]
+            translated_lines = [
+                html.unescape(item.get("translatedText", "")) for item in trans_list
+            ]
             translated = "\n".join(translated_lines)
         else:
             # 单行快路径
@@ -336,21 +404,28 @@ def translate_text(text: str, target_lang: str, source_lang: Optional[str] = Non
             if resp.status_code != 200:
                 return None
             data = resp.json()
-            translated = html.unescape(data["data"]["translations"][0]["translatedText"])
+            translated = html.unescape(
+                data["data"]["translations"][0]["translatedText"]
+            )
     except Exception:
         return None
 
     translation_cache[cache_key] = translated
     return translated, sl
 
+
 def guess_source_lang(s: str) -> Optional[str]:
     # 够用的小猜测：中文/日文/韩文/泰文；猜不到返回 None
     for ch in s:
         cp = ord(ch)
-        if 0x4E00 <= cp <= 0x9FFF: return "zh-cn"
-        if 0x3040 <= cp <= 0x30FF: return "ja"
-        if 0xAC00 <= cp <= 0xD7AF: return "ko"
-        if 0x0E00 <= cp <= 0x0E7F: return "th"
+        if 0x4E00 <= cp <= 0x9FFF:
+            return "zh-cn"
+        if 0x3040 <= cp <= 0x30FF:
+            return "ja"
+        if 0xAC00 <= cp <= 0xD7AF:
+            return "ko"
+        if 0x0E00 <= cp <= 0x0E7F:
+            return "th"
     return None
 
 # -------- 原子扣减（PostgreSQL 版本）--------
