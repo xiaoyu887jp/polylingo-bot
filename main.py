@@ -705,18 +705,20 @@ def line_webhook():
                     if atomic_deduct_group_quota(group_id, chars_used):
                         used_paid = True
                 if not used_paid and expired:
-                    send_reply_message(reply_token, [{"type":"text","text":"⚠️ 群套餐已過期，改用個人免費額度。"}])
+                    buy_url = build_buy_link(user_id, group_id)
+                    msg = f"⚠️ Your group plan has expired. Please renew here:\n{buy_url}"
+                    send_reply_message(reply_token, [{"type": "text", "text": msg}])
                 elif not used_paid and plan_remaining is not None and plan_remaining < chars_used:
-                    send_reply_message(reply_token, [{"type":"text","text":"ℹ️ 本群額度不足，改用個人免費額度。"}])
+                    buy_url = build_buy_link(user_id, group_id)
+                    msg = f"Your group quota is not enough. Please purchase more here:\n{buy_url}"
+                    send_reply_message(reply_token, [{"type": "text", "text": msg}])
 
             if not used_paid:
                 ok, _remain = atomic_deduct_user_free_quota(user_id, chars_used)
                 if not ok:
-                    alert = build_free_quota_alert(user_id, group_id)
-                    send_reply_message(reply_token, [
-                        {"type": "text", "text": alert},
-                        {"type": "text", "text": build_buy_link(user_id, group_id)}
-                    ])
+                    buy_url = build_buy_link(user_id, group_id)
+                    msg = f"Your free quota is used up. Please purchase a plan here:\n{buy_url}"
+                    send_reply_message(reply_token, [{"type": "text", "text": msg}])
                     continue
 
             # B7) 发送翻译结果
