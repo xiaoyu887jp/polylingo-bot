@@ -428,10 +428,10 @@ def guess_source_lang(s: str) -> Optional[str]:
             return "th"
     return None
 
-# -------- 原子扣减（PostgreSQL 版本）--------
+# -------- 原子扣减（PostgreSQL 版本，去掉 BEGIN）--------
 def atomic_deduct_group_quota(group_id: str, amount: int) -> bool:
     try:
-        cur.execute("BEGIN")  # PostgreSQL 用 BEGIN，不支持 "BEGIN IMMEDIATE"
+        # 直接 FOR UPDATE 锁行，使用当前隐式事务
         cur.execute("SELECT plan_remaining FROM groups WHERE group_id=%s FOR UPDATE", (group_id,))
         row = cur.fetchone()
         if not row or (row[0] is None) or (row[0] < amount):
@@ -443,14 +443,15 @@ def atomic_deduct_group_quota(group_id: str, amount: int) -> bool:
         )
         conn.commit()
         return True
-    except Exception:
+    except Exception as e:
+        logging.error(f"[atomic_deduct_group_quota] {e}")
         conn.rollback()
         return False
 
 
 def atomic_deduct_user_free_quota(user_id: str, amount: int):
     try:
-        cur.execute("BEGIN")
+        # 同理：不要执行 BEGIN
         cur.execute("SELECT free_remaining FROM users WHERE user_id=%s FOR UPDATE", (user_id,))
         row = cur.fetchone()
         if not row:
@@ -477,9 +478,11 @@ def atomic_deduct_user_free_quota(user_id: str, amount: int):
         )
         conn.commit()
         return (True, free_remaining - amount)
-    except Exception:
+    except Exception as e:
+        logging.error(f"[atomic_deduct_user_free_quota] {e}")
         conn.rollback()
         return (False, 0)
+
 
 # ===================== Flask 应用 =====================
 app = Flask(__name__)
