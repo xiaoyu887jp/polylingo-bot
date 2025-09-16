@@ -429,13 +429,15 @@ def line_webhook():
         group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
 
-        # 初始化免费额度（避免新用户无记录）
+        # A0) 初始化免费额度（只在用户第一次使用时插入，或者没额度时重置）
         if user_id:
             try:
                 cur.execute("""
                 INSERT INTO users (user_id, free_remaining)
                 VALUES (%s, %s)
-                ON CONFLICT (user_id) DO NOTHING
+                ON CONFLICT (user_id) DO UPDATE
+                SET free_remaining = EXCLUDED.free_remaining
+                WHERE users.free_remaining IS NULL OR users.free_remaining = 0
                 """, (user_id, PLANS['Free']['quota']))
                 conn.commit()
             except Exception as e:
@@ -449,7 +451,7 @@ def line_webhook():
                     cur.execute("DELETE FROM user_prefs WHERE group_id=%s", (group_id,))
                     conn.commit()
                 except Exception as e:
-                    logging.error(f"[join cleanup] failed: {e}")
+                    logging.error(f"[join cleanup] {e}")
                     conn.rollback()
             flex = build_language_selection_flex()
             send_reply_message(reply_token, [{
@@ -473,7 +475,7 @@ def line_webhook():
                     cur.execute("DELETE FROM user_prefs WHERE group_id=%s", (group_id,))
                     conn.commit()
                 except Exception as e:
-                    logging.error(f"[reset] failed: {e}")
+                    logging.error(f"[reset command] {e}")
                     conn.rollback()
                 flex = build_language_selection_flex()
                 send_reply_message(reply_token, [{
@@ -496,16 +498,15 @@ def line_webhook():
                     """, (user_id, group_id, lang_code))
                     conn.commit()
                 except Exception as e:
-                    logging.error(f"[set lang] failed: {e}")
+                    logging.error(f"[insert user_prefs] {e}")
                     conn.rollback()
 
-                # ===== 新增：綁定群到套餐 =====
+                # ===== 群绑定套餐逻辑 =====
                 try:
                     cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=%s", (user_id,))
                     row = cur.fetchone()
                 except Exception as e:
-                    logging.error(f"[get plan] failed: {e}")
-                    conn.rollback()
+                    logging.error(f"[check user_plans] {e}")
                     row = None
 
                 if row:
@@ -513,50 +514,33 @@ def line_webhook():
                     try:
                         cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
                         used = cur.fetchone()[0] or 0
+
                         cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
                         exists = cur.fetchone()
-                    except Exception as e:
-                        logging.error(f"[check group binding] failed: {e}")
-                        conn.rollback()
-                        exists = None
-                        used = 0
 
-                    if exists:
-                        if exists[0] == user_id:
-                            msg = "该群已在你的套餐名下。"
-                        else:
-                            msg = "⚠️ 该群已绑定在其他账户下，无法重复绑定。"
-                        send_reply_message(reply_token, [{"type": "text", "text": msg}])
-                        continue
+                        if exists:
+                            if exists[0] == user_id:
+                                msg = "该群已在你的套餐名下。"
+                            else:
+                                msg = "⚠️ 该群已绑定在其他账户下，无法重复绑定。"
+                            send_reply_message(reply_token, [{"type": "text", "text": msg}])
+                            continue
 
-                    if (max_groups is None) or (used < max_groups):
-                        try:
-                            cur.execute(
-                                "INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s)",
-                                (group_id, user_id)
-                            )
+                        if (max_groups is None) or (used < max_groups):
+                            cur.execute("INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s)", (group_id, user_id))
                             conn.commit()
                             msg = "✅ 群绑定成功。"
-                        except Exception as e:
-                            logging.error(f"[bind group] failed: {e}")
-                            conn.rollback()
-                            msg = "⚠️ 并发冲突，该群已被绑定。"
+                        else:
+                            msg = f"⚠️ 你的套餐最多可綁定 {max_groups} 個群組。請在舊群輸入 /unbind 解除綁定，或升級套餐。"
                         send_reply_message(reply_token, [{"type": "text", "text": msg}])
-                    else:
-                        send_reply_message(reply_token, [{
-                            "type": "text",
-                            "text": f"⚠️ 你的套餐最多可綁定 {max_groups} 個群組。請在舊群輸入 /unbind 解除綁定，或升級套餐。"
-                        }])
-                    continue
+                        continue
+                    except Exception as e:
+                        logging.error(f"[group binding] {e}")
+                        conn.rollback()
 
                 # 回覆當前語言設置
-                try:
-                    cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
-                    my_langs = [r[0] for r in cur.fetchall()] or [lang_code]
-                except Exception as e:
-                    logging.error(f"[reply langs] failed: {e}")
-                    conn.rollback()
-                    my_langs = [lang_code]
+                cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
+                my_langs = [r[0] for r in cur.fetchall()] or [lang_code]
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}])
                 continue
 
@@ -565,17 +549,11 @@ def line_webhook():
                 continue
 
             # B4) 收集发言者在本群配置的目标语言
-            try:
-                cur.execute("SELECT target_lang FROM user_prefs WHERE group_id=%s AND user_id=%s", (group_id, user_id))
-                configured = [row[0].lower() for row in cur.fetchall() if row and row[0]]
-            except Exception as e:
-                logging.error(f"[get user prefs] failed: {e}")
-                conn.rollback()
-                configured = []
+            cur.execute("SELECT target_lang FROM user_prefs WHERE group_id=%s AND user_id=%s", (group_id, user_id))
+            configured = [row[0].lower() for row in cur.fetchall() if row and row[0]]
             configured = list(dict.fromkeys(configured))
             if not configured:
-                tip = ("請先為【你自己】設定翻譯語言，輸入 /re /reset /resetlang 會出現語言卡片。\n"
-                       "Set your language with /re.")
+                tip = "請先為【你自己】設定翻譯語言，輸入 /re /reset /resetlang 會出現語言卡片。\nSet your language with /re."
                 send_reply_message(reply_token, [{"type": "text", "text": tip}])
                 continue
 
@@ -609,14 +587,8 @@ def line_webhook():
 
             # B6) 扣费 + 检查过期
             chars_used = len(text) * max(1, len(translations))
-            try:
-                cur.execute("SELECT plan_type, plan_remaining, plan_owner, expires_at FROM groups WHERE group_id=%s", (group_id,))
-                group_plan = cur.fetchone()
-            except Exception as e:
-                logging.error(f"[check group plan] failed: {e}")
-                conn.rollback()
-                group_plan = None
-
+            cur.execute("SELECT plan_type, plan_remaining, plan_owner, expires_at FROM groups WHERE group_id=%s", (group_id,))
+            group_plan = cur.fetchone()
             if group_plan:
                 plan_type, plan_remaining, plan_owner, expires_at = group_plan
                 if expires_at:
@@ -624,10 +596,7 @@ def line_webhook():
                     try:
                         if datetime.datetime.utcnow() > datetime.datetime.fromisoformat(expires_at):
                             buy_url = build_buy_link(user_id, group_id)
-                            send_reply_message(reply_token, [{
-                                "type": "text",
-                                "text": f"⚠️ 套餐已到期，請重新購買。\nPlan expired. Please renew:\n{buy_url}"
-                            }])
+                            send_reply_message(reply_token, [{"type": "text", "text": f"⚠️ 套餐已到期，請重新購買。\nPlan expired. Please renew:\n{buy_url}"}])
                             continue
                     except Exception as e:
                         logging.warning(f"expires_at parse failed: {e}")
@@ -649,7 +618,7 @@ def line_webhook():
                     ])
                     continue
 
-            # B7) 发送翻译
+            # B7) 发送翻译结果
             sender_icon = icon if ALWAYS_USER_AVATAR else BOT_AVATAR_FALLBACK
             messages = []
             for lang_code, txt in translations:
@@ -674,49 +643,31 @@ def line_webhook():
                     """, (user_id, group_id, lang_code))
                     conn.commit()
                 except Exception as e:
-                    logging.error(f"[postback set lang] failed: {e}")
+                    logging.error(f"[postback insert] {e}")
                     conn.rollback()
 
-                try:
-                    cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=%s", (user_id,))
-                    plan = cur.fetchone()
-                except Exception as e:
-                    logging.error(f"[postback get plan] failed: {e}")
-                    conn.rollback()
-                    plan = None
-
+                cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=%s", (user_id,))
+                plan = cur.fetchone()
                 if plan:
                     plan_type, max_groups = plan
-                    try:
-                        cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
-                        used = cur.fetchone()[0]
-                        if used < (max_groups or 0):
-                            cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
-                            exists = cur.fetchone()
-                            if not exists:
-                                cur.execute(
-                                    "INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s)",
-                                    (group_id, user_id)
-                                )
-                                conn.commit()
-                        else:
-                            alert = (f"當前套餐最多可用於{max_groups}個群組，請升級套餐。\n"
-                                     f"Current plan allows up to {max_groups} groups. Please upgrade for more.")
-                            send_reply_message(reply_token, [{"type": "text", "text": alert}])
-                    except Exception as e:
-                        logging.error(f"[postback bind group] failed: {e}")
-                        conn.rollback()
+                    cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
+                    used = cur.fetchone()[0]
+                    if used < (max_groups or 0):
+                        cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
+                        exists = cur.fetchone()
+                        if not exists:
+                            cur.execute("INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s)", (group_id, user_id))
+                            conn.commit()
+                    else:
+                        alert = f"當前套餐最多可用於{max_groups}個群組，請升級套餐。\nCurrent plan allows up to {max_groups} groups. Please upgrade for more."
+                        send_reply_message(reply_token, [{"type": "text", "text": alert}])
 
-                try:
-                    cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
-                    my_langs = [r[0] for r in cur.fetchall()] or [lang_code]
-                except Exception as e:
-                    logging.error(f"[postback reply langs] failed: {e}")
-                    conn.rollback()
-                    my_langs = [lang_code]
+                cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
+                my_langs = [r[0] for r in cur.fetchall()] or [lang_code]
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}])
 
     return "OK"
+
 
 # ---------------- Stripe Webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
