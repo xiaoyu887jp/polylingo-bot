@@ -429,6 +429,16 @@ def line_webhook():
         group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
 
+        # 初始化用户免费额度（确保有 5000）
+        if user_id:
+            with conn.cursor() as cur:
+                cur.execute("""
+                INSERT INTO users (user_id, free_remaining)
+                VALUES (%s, 5000)
+                ON CONFLICT (user_id) DO NOTHING
+                """, (user_id,))
+                conn.commit()
+
         # A) 机器人被拉入群：清理旧设定并发语言卡
         if etype == "join":
             if group_id:
