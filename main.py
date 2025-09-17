@@ -578,7 +578,7 @@ def line_webhook():
                 }])
                 continue
 
-            # B1.5) /unbind 解除群绑定（可选：此处仍是中文提示）
+            # B1.5) /unbind 解除群绑定
             if text.strip().lower() == "/unbind" and group_id:
                 try:
                     cur.execute("DELETE FROM group_bindings WHERE group_id=%s AND owner_id=%s", (group_id, user_id))
@@ -591,7 +591,7 @@ def line_webhook():
                     send_reply_message(reply_token, [{"type":"text","text":"❌ 解除綁定失敗，請稍後再試。"}])
                 continue
 
-            # B2) 语言按钮：更新发言者的语言，并尝试绑定群套餐
+            # B2) 语言按钮逻辑
             LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
             tnorm = text.strip().lower()
             if tnorm in LANG_CODES:
@@ -652,7 +652,7 @@ def line_webhook():
             if not group_id:
                 continue
 
-            # B4) 收集发言者在本群配置的目标语言
+            # B4) 收集语言
             cur.execute("SELECT target_lang FROM user_prefs WHERE group_id=%s AND user_id=%s", (group_id, user_id))
             configured = [row[0].lower() for row in cur.fetchall() if row and row[0]]
             configured = list(dict.fromkeys(configured))
@@ -689,7 +689,7 @@ def line_webhook():
                             translations.append((tl, txt))
             logging.info(f"[translate] langs={len(targets)} elapsed_ms={(time.perf_counter()-t0)*1000:.1f}")
 
-            # B6) 扣费 + 回落/中止逻辑（严格模式：用完即中止）
+            # B6) 扣费 + 中止逻辑
             chars_used = len(text) * max(1, len(translations))
             cur.execute("SELECT plan_type, plan_remaining, plan_owner, expires_at FROM groups WHERE group_id=%s", (group_id,))
             group_plan = cur.fetchone()
@@ -709,14 +709,17 @@ def line_webhook():
                     if atomic_deduct_group_quota(group_id, chars_used):
                         used_paid = True
 
-                # 群套餐过期 → 英文提示 + 购买链接 → 直接中止
+                # 群套餐过期提示（已修改为中英文）
                 if not used_paid and expired:
                     buy_url = build_buy_link(user_id, group_id)
-                    msg = f"⚠️ Your group plan has expired. Please renew here:\n{buy_url}"
+                    msg = (
+                        f"⚠️ 群套餐已到期，請重新購買\n"
+                        f"⚠️ Group plan expired. Please renew here:\n{buy_url}"
+                    )
                     send_reply_message(reply_token, [{"type": "text", "text": msg}])
                     continue
 
-                # 群额度不足 → 英文提示 + 购买链接 → 直接中止
+                # 群额度不足提示（仍是英文）
                 elif not used_paid and plan_remaining is not None and plan_remaining < chars_used:
                     buy_url = build_buy_link(user_id, group_id)
                     msg = f"Your group quota is not enough. Please purchase more here:\n{buy_url}"
@@ -743,42 +746,6 @@ def line_webhook():
                 })
             if messages:
                 send_reply_message(reply_token, messages[:5])
-
-        # C) 旧卡 postback
-        if etype == "postback":
-            data_pb = (event.get("postback", {}) or {}).get("data", "")
-            if data_pb.startswith("lang="):
-                lang_code = data_pb.split("=", 1)[1]
-                try:
-                    cur.execute("""
-                    INSERT INTO user_prefs (user_id, group_id, target_lang)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
-                    """, (user_id, group_id, lang_code))
-                    conn.commit()
-                except Exception as e:
-                    logging.error(f"[postback insert] {e}")
-                    conn.rollback()
-
-                cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=%s", (user_id,))
-                plan = cur.fetchone()
-                if plan:
-                    plan_type, max_groups = plan
-                    cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
-                    used = cur.fetchone()[0]
-                    if used < (max_groups or 0):
-                        cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
-                        exists = cur.fetchone()
-                        if not exists:
-                            cur.execute("INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s)", (group_id, user_id))
-                            conn.commit()
-                    else:
-                        alert = f"當前套餐最多可用於{max_groups}個群組，請升級套餐。\nCurrent plan allows up to {max_groups} groups. Please upgrade for more."
-                        send_reply_message(reply_token, [{"type": "text", "text": alert}])
-
-                cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
-                my_langs = [r[0] for r in cur.fetchall()] or [lang_code]
-                send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}])
 
     return "OK"
 
