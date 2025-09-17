@@ -1,3 +1,4 @@
+waitress
 requests
 flask
 gunicorn  
