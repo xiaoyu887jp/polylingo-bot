@@ -914,6 +914,11 @@ def stripe_webhook():
 
     return "OK"
 
-    # 生产建议 Start Command：
-    # gunicorn -w 2 -k gthread --threads 8 -t 60 -b 0.0.0.0:$PORT main:app
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
+
+
+# ---------------- 启动服务 ----------------
+if __name__ == "__main__":
+    from waitress import serve
+    port = int(os.getenv("PORT", 10000))
+    serve(app, host="0.0.0.0", port=port)
+
