@@ -785,11 +785,11 @@ def line_webhook():
 # ---------------- stripe-webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
-    _ensure_tx_clean()  # ★ 确保事务干净，避免连接被打坏
+    _ensure_tx_clean()  # 确保事务干净
     payload = request.get_data(as_text=False)  # 原始字节
     sig_header = request.headers.get("Stripe-Signature", "")
 
-    # 校验签名
+    # ---------- 校验签名 ----------
     if STRIPE_WEBHOOK_SECRET:
         try:
             ts, v1 = None, None
@@ -812,7 +812,7 @@ def stripe_webhook():
         except Exception:
             abort(400)
 
-    # 解析事件
+    # ---------- 解析事件 ----------
     try:
         event = json.loads(payload.decode("utf-8"))
     except Exception:
@@ -823,13 +823,13 @@ def stripe_webhook():
     if etype == "checkout.session.completed":
         obj = (event.get("data", {}) or {}).get("object", {}) or {}
 
-        user_id  = obj.get("client_reference_id")     # Checkout 里传的 line_id
-        sub_id   = obj.get("subscription")
-        md       = obj.get("metadata") or {}
+        user_id   = obj.get("client_reference_id")     # Checkout 里传的 line_id
+        sub_id    = obj.get("subscription")
+        md        = obj.get("metadata") or {}
         plan_name = (md.get("plan") or "").strip().capitalize()
         group_id  = md.get("group_id")
 
-        # 无效计划或无 user_id → 忽略
+        # ---------- 校验计划 ----------
         if (not user_id) or (plan_name not in PLANS):
             return "OK"
 
@@ -838,25 +838,25 @@ def stripe_webhook():
 
         # 计算套餐到期时间（UTC + 30天）
         import datetime
-        expires_at = (datetime.datetime.utcnow() + datetime.timedelta(days=30)).isoformat()
+        expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
 
+        # ---------- 1. 写入 / 更新用户套餐 ----------
         try:
-            # 1) 写入 / 更新用户套餐
             cur.execute("""
-                INSERT INTO user_plans (user_id, plan_type, max_groups, subscription_id)
+                INSERT INTO user_plans (user_id, plan_type, max_groups, expires_at)
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (user_id) DO UPDATE
                 SET plan_type = EXCLUDED.plan_type,
                     max_groups = EXCLUDED.max_groups,
-                    subscription_id = EXCLUDED.subscription_id
-            """, (user_id, plan_name, max_groups, sub_id))
+                    expires_at = EXCLUDED.expires_at
+            """, (user_id, plan_name, max_groups, expires_at))
             conn.commit()
         except Exception as e:
             logging.error(f"[user_plans upsert] {e}")
             conn.rollback()
             return "OK"
 
-        # 2) 如果有 group_id，绑定群并充值额度 + 到期日
+        # ---------- 2. 如果有 group_id，绑定群并充值额度 ----------
         if group_id:
             try:
                 # 2.1 检查该群是否已经被别人绑定
@@ -914,9 +914,6 @@ def stripe_webhook():
 
     return "OK"
 
-
-# ---------------- 启动 ----------------
-if __name__ == "__main__":
     # 生产建议 Start Command：
     # gunicorn -w 2 -k gthread --threads 8 -t 60 -b 0.0.0.0:$PORT main:app
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
