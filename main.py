@@ -461,8 +461,12 @@ def atomic_deduct_user_free_quota(user_id: str, amount: int):
                 return (False, 0)
             remaining = free_total - amount
             cur.execute(
-                "INSERT INTO users (user_id, free_remaining) VALUES (%s, %s)",
-                (user_id, remaining),
+                """
+                INSERT INTO users (user_id, free_remaining)
+                VALUES (%s, %s)
+                ON CONFLICT (user_id) DO UPDATE
+                SET free_remaining = EXCLUDED.free_remaining
+                """,
             )
             conn.commit()
             return (True, remaining)
