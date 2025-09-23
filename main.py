@@ -40,36 +40,23 @@ HTTP.mount("http://",  HTTPAdapter(pool_connections=25, pool_maxsize=50,  max_re
 # ===================== 环境变量 =====================
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_ACCESS_TOKEN") or os.getenv("LINE_CHANNEL_ACCESS_TOKEN") or "<LINE_CHANNEL_ACCESS_TOKEN>"
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET") or os.getenv("LINE_SECRET") or "<LINE_CHANNEL_SECRET>"
-BUY_URL_BASE = "https://saygo-translator.carrd.co"
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "<STRIPE_WEBHOOK_SECRET>")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+
+# 你的 Carrd 站点（用于生成购买链接）
+BUY_URL_BASE = "https://saygo-translator.carrd.co"
 
 if not GOOGLE_API_KEY:
     logging.warning("GOOGLE_API_KEY is not set. Translation will fail.")
 
-ALWAYS_USER_AVATAR = True
-BOT_AVATAR_FALLBACK = "https://i.imgur.com/sTqykvy.png"
-
-PLANS = {
-    'Free':    {'quota': 5000,    'max_groups': 0},
-    'Starter': {'quota': 300000,  'max_groups': 1},
-    'Basic':   {'quota': 1000000, 'max_groups': 3},
-    'Pro':     {'quota': 2000000, 'max_groups': 5},
-    'Expert':  {'quota': 4000000, 'max_groups': 10}
-}
-RESET_ALIASES = {"/re", "/reset", "/resetlang"}
-
-# ===================== 购买链接 =====================
-BUY_URL_BASE = "https://saygo-translator.carrd.co"
-
-from typing import Optional  # 你顶部已导入，无需重复
+# ===================== 购买链接 & 提示文案 =====================
+from typing import Optional  # 如果前面已导入，这行保留或删除都不影响
 
 def build_buy_link(user_id: str, group_id: Optional[str] = None) -> str:
     url = f"{BUY_URL_BASE}?line_id={user_id}"
     if group_id:
         url += f"&group_id={group_id}"
     return url
-
 
 def build_free_quota_alert(user_id: str, group_id: Optional[str] = None) -> str:
     url = build_buy_link(user_id, group_id)
@@ -87,28 +74,39 @@ def build_group_quota_alert(user_id: str, group_id: Optional[str] = None) -> str
         f"{url}"
     )
 
-
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "<STRIPE_WEBHOOK_SECRET>")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")  # ✅ 官方翻译 API key 仅从环境读取
-
-if not GOOGLE_API_KEY:
-    # 不打印 key，只提示缺失
-    logging.warning("GOOGLE_API_KEY is not set. Translation will fail.")
-
-# 头像策略：True=总用用户头像；False=统一用机器人头像
+# ===================== 头像策略 =====================
 ALWAYS_USER_AVATAR = True
 BOT_AVATAR_FALLBACK = "https://i.imgur.com/sTqykvy.png"
 
-# 计划与额度
+# ===================== 计划与额度（含 Stripe price_id） =====================
 PLANS = {
-    'Free':    {'quota': 5000,    'max_groups': 0},
-    'Starter': {'quota': 300000,  'max_groups': 1},
-    'Basic':   {'quota': 1000000, 'max_groups': 3},
-    'Pro':     {'quota': 2000000, 'max_groups': 5},
-    'Expert':  {'quota': 4000000, 'max_groups': 10}
+    'Free': {
+        'quota': 5000,
+        'max_groups': 0
+    },
+    'Starter': {
+        'quota': 300000,
+        'max_groups': 1,
+        'price_id': 'price_1RLjVTLhMUG5xYCsKu8Ozdc5'  # 入門方案
+    },
+    'Basic': {
+        'quota': 1000000,
+        'max_groups': 3,
+        'price_id': 'price_1RLkQyLhMUG5xYCscxtEhIun'  # 基礎方案
+    },
+    'Pro': {
+        'quota': 2000000,
+        'max_groups': 5,
+        'price_id': 'price_1RLkS0LhMUG5xYCsbFGEmKNM'  # 進階方案
+    },
+    'Expert': {
+        'quota': 4000000,
+        'max_groups': 10,
+        'price_id': 'price_1RLkSlLhMUG5xYCsGhfHM6uB'  # 專業方案
+    }
 }
 
-# 支持的重置指令
+# ===================== 支持的重置指令 =====================
 RESET_ALIASES = {"/re", "/reset", "/resetlang"}
 
 # ===================== DB 初始化（沿用新程序结构） =====================
