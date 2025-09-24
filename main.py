@@ -10,11 +10,15 @@ import psycopg2
 import html
 import requests
 from typing import Optional
-from flask import Flask, request, abort
+from flask import Flask, request, abort, jsonify
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from concurrent.futures import ThreadPoolExecutor
 from linebot import LineBotApi  # 仅为兼容保留，不直接使用
+
+# ---------------- Stripe ----------------
+import stripe
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 
 # ===================== DB 连接 =====================
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -755,65 +759,58 @@ def line_webhook():
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
     _ensure_tx_clean()  # 确保事务干净
-
-    # 取原始请求体 & Stripe 签名头
-    payload = request.get_data(as_text=False)  # bytes
+    payload = request.get_data(as_text=False)  # 原始字节
     sig_header = request.headers.get("Stripe-Signature", "")
 
-    # 使用 Stripe 官方 SDK 校验签名并解析事件（更安全、简洁）
+    # ---------- 使用 Stripe SDK 校验签名 ----------
     try:
         event = stripe.Webhook.construct_event(
-            payload=payload,
-            sig_header=sig_header,
-            secret=STRIPE_WEBHOOK_SECRET
+            payload, sig_header, STRIPE_WEBHOOK_SECRET
         )
-    except Exception as e:
-        logging.error(f"[webhook] signature/parse failed: {e}")
+    except stripe.error.SignatureVerificationError as e:
+        logging.error(f"Webhook signature verification failed: {e}")
         return "Invalid signature", 400
 
-    etype = event.get("type", "")
-    obj = (event.get("data", {}) or {}).get("object", {}) or {}
+    etype = event.get("type")
 
     if etype == "checkout.session.completed":
-        # 从 metadata 中取 plan / line_id / group_id（与 create-checkout-session 保持一致）
-        md = obj.get("metadata") or {}
-        plan_name = (md.get("plan") or "").strip()
-        user_id   = (md.get("line_id") or obj.get("client_reference_id") or "").strip()
-        group_id  = (md.get("group_id") or "").strip()
-        sub_id    = obj.get("subscription")
+        obj = event["data"]["object"]
 
-        # 计划校验
+        user_id   = obj.get("client_reference_id")
+        sub_id    = obj.get("subscription")
+        md        = obj.get("metadata") or {}
+        plan_name = (md.get("plan") or "").strip().capitalize()
+        group_id  = md.get("group_id")
+
+        # ---------- 校验计划 ----------
         if (not user_id) or (plan_name not in PLANS):
-            logging.warning(f"[webhook] invalid user/plan. user_id={user_id} plan={plan_name}")
             return "OK"
 
-        quota      = PLANS[plan_name]["quota"]
         max_groups = PLANS[plan_name]["max_groups"]
+        quota      = PLANS[plan_name]["quota"]
 
-        # 仅对 groups 表写有效期（你的表里有 expires_at 字段），存 ISO 字符串，便于后续 fromisoformat 解析
         import datetime
-        expires_at = (datetime.datetime.utcnow() + datetime.timedelta(days=30)).isoformat()
+        expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
 
-        # 1) 写/更新用户套餐（注意：按你当前建表结构，没有 expires_at 列，这里只写 subscription_id）
+        # ---------- 1. 写入 / 更新用户套餐 ----------
         try:
             cur.execute("""
-                INSERT INTO user_plans (user_id, plan_type, max_groups, subscription_id)
+                INSERT INTO user_plans (user_id, plan_type, max_groups, expires_at)
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (user_id) DO UPDATE
                 SET plan_type = EXCLUDED.plan_type,
                     max_groups = EXCLUDED.max_groups,
-                    subscription_id = EXCLUDED.subscription_id
-            """, (user_id, plan_name, max_groups, sub_id))
+                    expires_at = EXCLUDED.expires_at
+            """, (user_id, plan_name, max_groups, expires_at))
             conn.commit()
         except Exception as e:
+            logging.error(f"[user_plans upsert] {e}")
             conn.rollback()
-            logging.error(f"[webhook] user_plans upsert failed: {e}")
             return "OK"
 
-        # 2) 如带 group_id：绑定群并为该群充值额度
+        # ---------- 2. 如果有 group_id，绑定群并充值额度 ----------
         if group_id:
             try:
-                # 2.1 检查群是否被他人占用
                 cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
                 row = cur.fetchone()
                 if row and row[0] and row[0] != user_id:
@@ -823,12 +820,10 @@ def stripe_webhook():
                         f"⚠️ Group {group_id} is already bound to another account."
                     )
                 else:
-                    # 2.2 校验已绑定群数量
                     cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
                     used = cur.fetchone()[0] or 0
 
                     if row or (max_groups is None) or (used < max_groups):
-                        # 如未绑定，创建绑定记录
                         if not row:
                             cur.execute(
                                 "INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s)",
@@ -836,7 +831,6 @@ def stripe_webhook():
                             )
                             conn.commit()
 
-                        # 2.3 为该群写套餐信息（额度 + 到期）
                         cur.execute("""
                             INSERT INTO groups (group_id, plan_type, plan_owner, plan_remaining, expires_at)
                             VALUES (%s, %s, %s, %s, %s)
@@ -854,16 +848,11 @@ def stripe_webhook():
                             f"✅ {plan_name} plan activated. Group {group_id} has {quota} characters. Valid until {expires_at} (UTC)."
                         )
                     else:
-                        # 不再调用你旧代码里的 notify_group_limit（避免未定义报错），直接提示
-                        send_push_text(
-                            user_id,
-                            f"⚠️ 你的套餐最多可綁定 {max_groups} 個群組。請在舊群輸入 /unbind 解除綁定，或升級套餐。"
-                        )
+                        notify_group_limit(user_id, group_id, max_groups)
             except Exception as e:
+                logging.error(f"[group binding/upsert] {e}")
                 conn.rollback()
-                logging.error(f"[webhook] group binding/upsert failed: {e}")
         else:
-            # 无 group_id：只激活用户套餐
             send_push_text(
                 user_id,
                 f"✅ {plan_name} 套餐已启用。将机器人加入群后，输入 /re 设置翻译语言。\n\n"
@@ -871,6 +860,7 @@ def stripe_webhook():
             )
 
     return "OK"
+
 
 # ---------------- 启动服务 ----------------
 if __name__ == "__main__":
