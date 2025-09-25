@@ -489,6 +489,8 @@ def atomic_deduct_user_free_quota(user_id: str, amount: int):
         conn.rollback()
         return (False, 0)
 
+# ===================== Flask 应用 =====================
+app = Flask(__name__)   # ← 这一行要放最前面
 
 # ---------------- LINE Webhook ----------------
 from psycopg2 import extensions
@@ -752,8 +754,6 @@ def line_webhook():
 
     return "OK"
 
-# ===================== Flask 应用 =====================
-app = Flask(__name__)
 
 # ---------------- Stripe Checkout ----------------
 from flask import redirect
