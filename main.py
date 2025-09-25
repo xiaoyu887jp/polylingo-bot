@@ -490,9 +490,6 @@ def atomic_deduct_user_free_quota(user_id: str, amount: int):
         return (False, 0)
 
 
-# ===================== Flask 应用 =====================
-app = Flask(__name__)
-
 # ---------------- LINE Webhook ----------------
 from psycopg2 import extensions
 
@@ -755,19 +752,71 @@ def line_webhook():
 
     return "OK"
 
-# ---------------- stripe-webhook ----------------
+# ===================== Flask 应用 =====================
+app = Flask(__name__)
+
+# ---------------- Stripe Checkout ----------------
+from flask import redirect
+
+@app.route("/buy", methods=["GET"])
+def buy_redirect():
+    """
+    访问 /buy?plan=Starter&user_id=Uxxxx&group_id=Cxxxx
+    创建 Checkout Session 并跳转到 Stripe。
+    """
+    import stripe
+    stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+
+    plan_name = (request.args.get("plan") or "").strip().capitalize()
+    user_id   = request.args.get("user_id") or request.args.get("line_id")
+    group_id  = request.args.get("group_id")
+
+    if (not plan_name) or (plan_name not in PLANS) or (not user_id):
+        return "Missing or invalid params", 400
+
+    price_id = PLANS[plan_name].get("price_id")
+    if not price_id:
+        return f"Plan {plan_name} missing price_id", 500
+
+    try:
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            payment_method_types=["card"],
+            line_items=[{"price": price_id, "quantity": 1}],
+            success_url="https://polylingo-bot.onrender.com/success",
+            cancel_url="https://polylingo-bot.onrender.com/cancel",
+            client_reference_id=user_id,
+            metadata={"plan": plan_name, "group_id": group_id or ""},
+        )
+        return redirect(session.url, code=302)
+    except Exception as e:
+        logging.error(f"[Stripe checkout create error] {e}")
+        return "Stripe error", 500
+
+
+@app.route("/success")
+def success():
+    return "✅ Payment success. You can close this page."
+
+@app.route("/cancel")
+def cancel():
+    return "❌ Payment canceled. You can close this page."
+
+
+# ---------------- Stripe Webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
     _ensure_tx_clean()  # 确保事务干净
     payload = request.get_data(as_text=False)  # 原始字节
     sig_header = request.headers.get("Stripe-Signature", "")
 
-    # ---------- 使用 Stripe SDK 校验签名 ----------
     try:
+        import stripe
+        stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
         event = stripe.Webhook.construct_event(
             payload, sig_header, STRIPE_WEBHOOK_SECRET
         )
-    except stripe.error.SignatureVerificationError as e:
+    except Exception as e:
         logging.error(f"Webhook signature verification failed: {e}")
         return "Invalid signature", 400
 
@@ -777,12 +826,11 @@ def stripe_webhook():
         obj = event["data"]["object"]
 
         user_id   = obj.get("client_reference_id")
-        sub_id    = obj.get("subscription")
         md        = obj.get("metadata") or {}
         plan_name = (md.get("plan") or "").strip().capitalize()
         group_id  = md.get("group_id")
+        sub_id    = obj.get("subscription")
 
-        # ---------- 校验计划 ----------
         if (not user_id) or (plan_name not in PLANS):
             return "OK"
 
