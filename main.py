@@ -841,10 +841,11 @@ def buy_redirect():
 
 
 # ===== Carrd 调用：返回 Stripe Checkout 链接 =====
+# ===== Carrd 调用：返回 Stripe Checkout 链接 =====
 @app.route("/create-checkout-session", methods=["POST", "OPTIONS"])
 def create_checkout_session():
     if request.method == "OPTIONS":
-        return ("", 204)  # 预检请求，给 Carrd 用的
+        return ("", 204)  # 预检请求，给 Carrd 用
 
     if not stripe.api_key:
         return jsonify({"error": "server missing STRIPE_SECRET_KEY"}), 500
@@ -877,15 +878,14 @@ def create_checkout_session():
         return jsonify({"error": "Stripe error"}), 500
 
 
+# ===== 支付成功 / 取消 =====
 @app.route("/success")
 def success():
     return "✅ Payment success. You can close this page."
 
-
 @app.route("/cancel")
 def cancel():
     return "❌ Payment canceled. You can close this page."
-
 
 # ---------------- Stripe Webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
