@@ -840,13 +840,16 @@ def buy_redirect():
         return "Stripe error", 500
 
 
-# Carrd 按钮调用的接口（返回 JSON 而不是重定向）
-@app.route("/create-checkout-session", methods=["POST"])
+# ===== Carrd 调用：返回 Stripe Checkout 链接 =====
+@app.route("/create-checkout-session", methods=["POST", "OPTIONS"])
 def create_checkout_session():
-    import stripe
-    stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+    if request.method == "OPTIONS":
+        return ("", 204)  # 预检请求，给 Carrd 用的
 
-    data = request.get_json(force=True)
+    if not stripe.api_key:
+        return jsonify({"error": "server missing STRIPE_SECRET_KEY"}), 500
+
+    data = request.get_json(force=True) or {}
     plan_name = (data.get("plan") or "").strip().capitalize()
     user_id   = data.get("line_id")
     group_id  = data.get("group_id")
