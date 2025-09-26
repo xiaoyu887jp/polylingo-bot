@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 import os
 import time
@@ -492,52 +493,6 @@ def atomic_deduct_user_free_quota(user_id: str, amount: int):
 # ===================== Flask 应用 =====================
 app = Flask(__name__)   # ← 这一行要放最前面
 
-# ===== CORS：Carrd 页面跨域需要 =====
-@app.after_request
-def add_cors_headers(resp):
-    resp.headers["Access-Control-Allow-Origin"] = "https://saygo-translator.carrd.co"
-    resp.headers["Vary"] = "Origin"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
-    resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-    return resp
-
-# ===== Carrd 调用：返回 Stripe Checkout 链接 =====
-@app.route("/create-checkout-session", methods=["POST", "OPTIONS"])
-def create_checkout_session():
-    if request.method == "OPTIONS":
-        return ("", 204)  # 预检
-
-    if not stripe.api_key:
-        return jsonify({"error": "server missing STRIPE_SECRET_KEY"}), 500
-
-    data = request.get_json(force=True) or {}
-    plan_name = (data.get("plan") or "").strip().capitalize()
-    user_id   = data.get("line_id")
-    group_id  = data.get("group_id")
-
-    if (not plan_name) or (plan_name not in PLANS) or (not user_id):
-        return jsonify({"error": "invalid params"}), 400
-
-    price_id = PLANS[plan_name].get("price_id")
-    if not price_id:
-        return jsonify({"error": f"plan {plan_name} missing price_id"}), 500
-
-    try:
-        session = stripe.checkout.Session.create(
-            mode="subscription",
-            payment_method_types=["card"],
-            line_items=[{"price": price_id, "quantity": 1}],
-            success_url="https://polylingo-bot.onrender.com/success",
-            cancel_url="https://polylingo-bot.onrender.com/cancel",
-            client_reference_id=user_id,
-            metadata={"plan": plan_name, "group_id": group_id or ""},
-        )
-        return jsonify({"url": session.url})
-    except Exception as e:
-        logging.error(f"[Stripe checkout create error] {e}")
-        return jsonify({"error": "Stripe error"}), 500
-
-
 # ---------------- LINE Webhook ----------------
 from psycopg2 import extensions
 
@@ -802,7 +757,7 @@ def line_webhook():
 
 
 # ---------------- Stripe Checkout ----------------
-from flask import redirect, jsonify
+from flask import redirect
 
 @app.route("/buy", methods=["GET"])
 def buy_redirect():
@@ -840,45 +795,6 @@ def buy_redirect():
         return "Stripe error", 500
 
 
-# ===== Carrd 调用：返回 Stripe Checkout 链接 =====
-# ===== Carrd 调用：返回 Stripe Checkout 链接 =====
-@app.route("/create-checkout-session", methods=["POST", "OPTIONS"])
-def create_checkout_session():
-    if request.method == "OPTIONS":
-        return ("", 204)  # 预检请求，给 Carrd 用
-
-    if not stripe.api_key:
-        return jsonify({"error": "server missing STRIPE_SECRET_KEY"}), 500
-
-    data = request.get_json(force=True) or {}
-    plan_name = (data.get("plan") or "").strip().capitalize()
-    user_id   = data.get("line_id")
-    group_id  = data.get("group_id")
-
-    if (not plan_name) or (plan_name not in PLANS) or (not user_id):
-        return jsonify({"error": "invalid params"}), 400
-
-    price_id = PLANS[plan_name].get("price_id")
-    if not price_id:
-        return jsonify({"error": f"plan {plan_name} missing price_id"}), 500
-
-    try:
-        session = stripe.checkout.Session.create(
-            mode="subscription",
-            payment_method_types=["card"],
-            line_items=[{"price": price_id, "quantity": 1}],
-            success_url="https://polylingo-bot.onrender.com/success",
-            cancel_url="https://polylingo-bot.onrender.com/cancel",
-            client_reference_id=user_id,
-            metadata={"plan": plan_name, "group_id": group_id or ""},
-        )
-        return jsonify({"url": session.url})
-    except Exception as e:
-        logging.error(f"[Stripe checkout create error] {e}")
-        return jsonify({"error": "Stripe error"}), 500
-
-
-# ===== 支付成功 / 取消 =====
 @app.route("/success")
 def success():
     return "✅ Payment success. You can close this page."
@@ -886,6 +802,7 @@ def success():
 @app.route("/cancel")
 def cancel():
     return "❌ Payment canceled. You can close this page."
+
 
 # ---------------- Stripe Webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
@@ -999,4 +916,3 @@ if __name__ == "__main__":
     from waitress import serve
     port = int(os.getenv("PORT", 10000))
     serve(app, host="0.0.0.0", port=port)
-
