@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS user_plans (
     plan_type TEXT,
     max_groups INTEGER,
     subscription_id TEXT
+    expires_at TEXT   -- 新增，有效期
 )
 """)
 
@@ -470,6 +471,7 @@ def atomic_deduct_user_free_quota(user_id: str, amount: int):
                 ON CONFLICT (user_id) DO UPDATE
                 SET free_remaining = EXCLUDED.free_remaining
                 """,
+                (user_id, remaining)
             )
             conn.commit()
             return (True, remaining)
@@ -847,54 +849,13 @@ def line_webhook():
                 send_reply_message(reply_token, messages[:5])
 
     return "OK"
-
-
-# ---------------- Stripe Checkout ----------------
-from flask import redirect
-
-@app.route("/buy", methods=["GET"])
-def buy_redirect():
-    """
-    访问 /buy?plan=Starter&user_id=Uxxxx&group_id=Cxxxx
-    创建 Checkout Session 并跳转到 Stripe。
-    """
-    import stripe
-    stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
-
-    plan_name = (request.args.get("plan") or "").strip().capitalize()
-    user_id   = request.args.get("user_id") or request.args.get("line_id")
-    group_id  = request.args.get("group_id")
-
-    if (not plan_name) or (plan_name not in PLANS) or (not user_id):
-        return "Missing or invalid params", 400
-
-    price_id = PLANS[plan_name].get("price_id")
-    if not price_id:
-        return f"Plan {plan_name} missing price_id", 500
-
-    try:
-        session = stripe.checkout.Session.create(
-            mode="subscription",
-            payment_method_types=["card"],
-            line_items=[{"price": price_id, "quantity": 1}],
-            success_url="https://polylingo-bot.onrender.com/success",
-            cancel_url="https://polylingo-bot.onrender.com/cancel",
-            client_reference_id=user_id,
-            metadata={"plan": plan_name, "group_id": group_id or ""},
-        )
-        return redirect(session.url, code=302)
-    except Exception as e:
-        logging.error(f"[Stripe checkout create error] {e}")
-        return "Stripe error", 500
-
-
-@app.route("/success")
-def success():
-    return "✅ Payment success. You can close this page."
-
-@app.route("/cancel")
-def cancel():
-    return "❌ Payment canceled. You can close this page."
+    
+def notify_group_limit(user_id, group_id, max_groups):
+    send_push_text(
+        user_id,
+        f"⚠️ 你已绑定 {max_groups} 个群，无法再绑定群 {group_id}。\n"
+        f"⚠️ You already used up {max_groups} groups. Please /unbind old groups or upgrade."
+    )
 
 
 # ---------------- Stripe Webhook ----------------
