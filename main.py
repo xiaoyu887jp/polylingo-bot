@@ -502,6 +502,7 @@ def add_cors_headers(resp):
     resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
     return resp
 
+
 # ===== Carrd 调用：返回 Stripe Checkout 链接 (POST) =====
 @app.route("/create-checkout-session", methods=["POST", "OPTIONS"])
 def create_checkout_session():
@@ -538,8 +539,9 @@ def create_checkout_session():
         logging.error(f"[Stripe checkout create error] {e}")
         return jsonify({"error": "Stripe error"}), 500
 
+
 # ===== Carrd 按钮 GET 路由 =====
-from flask import redirect  # 确保文件顶部有导入 redirect
+from flask import redirect
 @app.route("/buy", methods=["GET"])
 def buy_redirect():
     if not stripe.api_key:
@@ -571,6 +573,7 @@ def buy_redirect():
         logging.error(f"[Stripe checkout create error] {e}")
         return "Stripe error", 500
 
+
 # ===== 支付成功 / 取消 回显 =====
 @app.route("/success")
 def success():
@@ -579,6 +582,7 @@ def success():
 @app.route("/cancel")
 def cancel():
     return "❌ Payment canceled. You can close this page."
+
 
 # ---------------- LINE Webhook ----------------
 from psycopg2 import extensions
@@ -597,6 +601,8 @@ def _ensure_tx_clean():
 @app.route("/callback", methods=["POST"])
 def line_webhook():
     _ensure_tx_clean()   # ★ 每次请求进来先清理事务状态
+    # 这里继续写 LINE webhook 的处理逻辑
+
 
     # 校验签名
     signature = request.headers.get("X-Line-Signature", "")
