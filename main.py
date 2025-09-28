@@ -151,7 +151,7 @@ CREATE TABLE IF NOT EXISTS user_plans (
     user_id TEXT PRIMARY KEY,
     plan_type TEXT,
     max_groups INTEGER,
-    subscription_id TEXT
+    subscription_id TEXT,
     expires_at TEXT   -- 新增，有效期
 )
 """)
