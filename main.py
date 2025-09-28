@@ -141,7 +141,8 @@ CREATE TABLE IF NOT EXISTS groups (
     plan_type TEXT,
     plan_owner TEXT,
     plan_remaining INTEGER,
-    expires_at TEXT   -- 暂时用 TEXT，兼容你后面 datetime.fromisoformat()
+    -- 暂时用 TEXT，兼容你后面 datetime.fromisoformat()
+    expires_at TEXT
 )
 """)
 
