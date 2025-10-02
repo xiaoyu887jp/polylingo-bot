@@ -631,8 +631,6 @@ def line_webhook():
                 INSERT INTO users (user_id, free_remaining)
                 VALUES (%s, %s)
                 ON CONFLICT (user_id) DO UPDATE
-                SET free_remaining = EXCLUDED.free_remaining
-                WHERE users.free_remaining IS NULL OR users.free_remaining = 0
                 """, (user_id, PLANS['Free']['quota']))
                 conn.commit()
             except Exception as e:
