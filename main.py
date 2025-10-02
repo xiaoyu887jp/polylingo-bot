@@ -658,9 +658,9 @@ def line_webhook():
         if user_id:
             try:
                 cur.execute("""
-                INSERT INTO users (user_id, free_remaining)
-                VALUES (%s, %s)
-                ON CONFLICT (user_id) DO UPDATE
+                    INSERT INTO users (user_id, free_remaining)
+                    VALUES (%s, %s)
+                    ON CONFLICT (user_id) DO NOTHING
                 """, (user_id, PLANS['Free']['quota']))
                 conn.commit()
             except Exception as e:
