@@ -142,8 +142,7 @@ CREATE TABLE IF NOT EXISTS groups (
     plan_type TEXT,
     plan_owner TEXT,
     plan_remaining INTEGER,
-    expires_at TEXT
-    -- 暂时用 TEXT, 兼容你后面 datetime.fromisoformat()
+    expires_at TEXT  -- 保持 TEXT（与你现有代码兼容）
 )
 """)
 
@@ -153,7 +152,7 @@ CREATE TABLE IF NOT EXISTS user_plans (
     plan_type TEXT,
     max_groups INTEGER,
     subscription_id TEXT,
-    expires_at TEXT   -- 新增，有效期
+    expires_at TEXT   -- 保持 TEXT（与你现有代码兼容）
 )
 """)
 
@@ -175,6 +174,16 @@ CREATE TABLE IF NOT EXISTS translations_cache (
 )
 """)
 
+# 关键：建表后先提交一次，确保结构对后续查询可见
+conn.commit()
+
+# （可选强化）把历史数据里 users.free_remaining 的 NULL 统一为 0，避免后续扣减遇到 None
+try:
+    cur.execute("UPDATE users SET free_remaining = 0 WHERE free_remaining IS NULL")
+    conn.commit()
+except Exception as e:
+    logging.warning(f"[schema post-fix] {e}")
+    conn.rollback()
 
 # ===================== 工具函数 =====================
 RESET_ALIASES = {"/re", "/reset", "/resetlang"}
