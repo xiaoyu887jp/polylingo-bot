@@ -1,3 +1,5 @@
+
+
 # -*- coding: utf-8 -*-
 import os
 import time
@@ -454,74 +456,43 @@ def atomic_deduct_group_quota(group_id: str, amount: int) -> bool:
 
 
 def atomic_deduct_user_free_quota(user_id: str, amount: int):
-    """
-    原子扣减个人免费额度：
-    - 若用户不存在：先插入起始值（5000），再原子扣减 amount。
-    - 若用户存在：FOR UPDATE 锁行后直接扣减。
-    - 额度不足返回 (False, 剩余额度)；成功返回 (True, 扣减后的剩余额度)。
-    """
     try:
-        # 先尝试锁定已存在的用户记录
+        # 同理：不要执行 BEGIN
         cur.execute("SELECT free_remaining FROM users WHERE user_id=%s FOR UPDATE", (user_id,))
         row = cur.fetchone()
-
-        # 情况一：用户已存在
-        if row is not None:
-            free_remaining = row[0] or 0
-            if free_remaining < amount:
+        if not row:
+            free_total = PLANS['Free']['quota']
+            if amount > free_total:
                 conn.rollback()
-                return (False, free_remaining)
-
-            # 扣减并返回最新余额
-            cur.execute("""
-                UPDATE users
-                SET free_remaining = free_remaining - %s
-                WHERE user_id = %s
-                RETURNING free_remaining
-            """, (amount, user_id))
-            new_rem = cur.fetchone()[0]
+                return (False, 0)
+            remaining = free_total - amount
+            cur.execute(
+                """
+                INSERT INTO users (user_id, free_remaining)
+                VALUES (%s, %s)
+                ON CONFLICT (user_id) DO UPDATE
+                SET free_remaining = EXCLUDED.free_remaining
+                """,
+                (user_id, remaining)
+            )
             conn.commit()
-            return (True, new_rem)
+            return (True, remaining)
 
-        # 情况二：用户不存在（第一次使用）
-        free_total = PLANS['Free']['quota']
-
-        # 如果一次消息就超过免费总额，直接失败
-        if amount > free_total:
+        free_remaining = row[0] or 0
+        if free_remaining < amount:
             conn.rollback()
-            return (False, 0)
+            return (False, free_remaining)
 
-        # 插入起始额度；并发情况下若别人已插入，DO NOTHING
-        cur.execute("""
-            INSERT INTO users (user_id, free_remaining)
-            VALUES (%s, %s)
-            ON CONFLICT (user_id) DO NOTHING
-        """, (user_id, free_total))
-
-        # 用条件 UPDATE 原子扣减（只有余额足够才成功）
-        cur.execute("""
-            UPDATE users
-            SET free_remaining = free_remaining - %s
-            WHERE user_id = %s AND free_remaining >= %s
-            RETURNING free_remaining
-        """, (amount, user_id, amount))
-        r = cur.fetchone()
-        if not r:
-            # 可能是并发或余额不足
-            conn.rollback()
-            cur.execute("SELECT free_remaining FROM users WHERE user_id=%s", (user_id,))
-            row2 = cur.fetchone()
-            remain = (row2[0] if row2 else 0)
-            return (False, remain)
-
+        cur.execute(
+            "UPDATE users SET free_remaining = free_remaining - %s WHERE user_id=%s",
+            (amount, user_id),
+        )
         conn.commit()
-        return (True, r[0])
-
+        return (True, free_remaining - amount)
     except Exception as e:
         logging.error(f"[atomic_deduct_user_free_quota] {e}")
         conn.rollback()
         return (False, 0)
-
 
 # ===================== Flask 应用 =====================
 app = Flask(__name__)   # ← 这一行要放最前面
@@ -658,9 +629,11 @@ def line_webhook():
         if user_id:
             try:
                 cur.execute("""
-                    INSERT INTO users (user_id, free_remaining)
-                    VALUES (%s, %s)
-                    ON CONFLICT (user_id) DO NOTHING
+                INSERT INTO users (user_id, free_remaining)
+                VALUES (%s, %s)
+                ON CONFLICT (user_id) DO UPDATE
+                SET free_remaining = EXCLUDED.free_remaining
+                WHERE users.free_remaining IS NULL OR users.free_remaining = 0
                 """, (user_id, PLANS['Free']['quota']))
                 conn.commit()
             except Exception as e:
