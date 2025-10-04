@@ -569,8 +569,8 @@ def create_checkout_session():
             mode="subscription",
             payment_method_types=["card"],
             line_items=[{"price": price_id, "quantity": 1}],
-            success_url="https://polylingo-bot.onrender.com/success",
-            cancel_url="https://polylingo-bot.onrender.com/cancel",
+            success_url="https://saygo-translator.carrd.co#success",
+            cancel_url="https://saygo-translator.carrd.co#cancel",
             client_reference_id=user_id,
             metadata={"plan": plan_name, "group_id": group_id or ""},
         )
