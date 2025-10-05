@@ -894,64 +894,67 @@ def notify_group_limit(user_id, group_id, max_groups):
         f"⚠️ 你已绑定 {max_groups} 个群，无法再绑定群 {group_id}。\n"
         f"⚠️ You already used up {max_groups} groups. Please /unbind old groups or upgrade."
     )
-
 # ---------------- Stripe Webhook ----------------
+from stripe.error import SignatureVerificationError  # 关键：正确的异常类
+
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
     _ensure_tx_clean()  # 确保事务干净
 
-    # 1) 原始字节，不做任何解码/缓存
-    payload = request.get_data(cache=False, as_text=False)
-    sig_header = request.headers.get("Stripe-Signature", "")
-    secret = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
+    # 读取并清理端点密钥（防止复制时混入空格/换行）
+    endpoint_secret = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
+    if not endpoint_secret:
+        logging.error("[wh] missing STRIPE_WEBHOOK_SECRET")
+        return "Misconfigured", 500
 
-    # 小日志（脱敏），便于判断是不是 env 里有空格/换行
+    # ✅ 一定用“字符串”读取原始请求体（与 Stripe 官方 Flask 示例一致）
+    #   不要在验签前做任何 JSON 解析或替换操作
+    payload = request.get_data(as_text=True)
+    sig_header = request.headers.get("Stripe-Signature", "")
+
+    # 轻量日志（不含敏感数据）
     try:
-        logging.info(
-            "[wh] hdr_present=%s paylen=%s whsec_len=%s whsec_prefix=%s",
-            bool(sig_header), len(payload), len(secret), secret[:6]  # 例如 'whsec_'
-        )
+        tkn = sig_header.split(",")[0] if sig_header else ""
+        logging.info(f"[wh] recv Stripe event: payload_len={len(payload)} sig_head={tkn}")
     except Exception:
         pass
 
-    # 2) 构造并校验事件 —— 这里避免使用 stripe.error，兼容所有版本
+    # 先验签，再取 event
     try:
         event = stripe.Webhook.construct_event(
-            payload=payload,
+            payload=payload,                 # 字符串
             sig_header=sig_header,
-            secret=secret
+            secret=endpoint_secret
         )
+    except SignatureVerificationError as e:
+        logging.error(f"[wh] invalid signature: {e}")
+        return "Invalid signature", 400
     except Exception as e:
-        # 只要报错信息里含 signature 关键字，一律当作签名失败 -> 400
-        msg = str(e)
-        if "signature" in msg.lower():
-            logging.error("[wh] invalid signature: %s", msg)
-            return "Invalid signature", 400
-        logging.exception("[wh] construct_event failed: %s", msg)
-        return "Webhook error", 500
+        logging.exception("[wh] construct_event failed")
+        return "Bad request", 400
 
     etype = event.get("type")
-    if etype == "checkout.session.completed":
-        obj = event["data"]["object"]
+    data  = event.get("data", {}) or {}
+    obj   = data.get("object", {}) or {}
 
+    if etype == "checkout.session.completed":
         user_id   = obj.get("client_reference_id")
         md        = obj.get("metadata") or {}
         plan_name = (md.get("plan") or "").strip().capitalize()
-        group_id  = md.get("group_id")
+        group_id  = (md.get("group_id") or "").strip()
         sub_id    = obj.get("subscription")
 
         if (not user_id) or (plan_name not in PLANS):
-            logging.warning("[wh] missing user_id or invalid plan: user_id=%s plan=%s", user_id, plan_name)
-            return "OK", 200
+            logging.warning(f"[wh] missing params: user_id={user_id} plan={plan_name}")
+            return "OK"
 
         max_groups = PLANS[plan_name]["max_groups"]
         quota      = PLANS[plan_name]["quota"]
 
         import datetime
-        # 用 ISO 字符串，与你后面 fromisoformat 解析一致
-        expires_at = (datetime.datetime.utcnow() + datetime.timedelta(days=30)).isoformat()
+        expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
 
-        # ---------- 1) 写入 / 更新用户套餐 ----------
+        # ---------- 1) 写 / 更新 user_plans ----------
         try:
             cur.execute("""
                 INSERT INTO user_plans (user_id, plan_type, max_groups, expires_at)
@@ -963,11 +966,11 @@ def stripe_webhook():
             """, (user_id, plan_name, max_groups, expires_at))
             conn.commit()
         except Exception as e:
-            logging.error("[user_plans upsert] %s", e)
+            logging.error(f"[user_plans upsert] {e}")
             conn.rollback()
-            return "OK", 200
+            return "OK"
 
-        # ---------- 2) 若带 group_id，则绑定并充值 ----------
+        # ---------- 2) 有 group_id 则绑定并充值 ----------
         if group_id:
             try:
                 cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
@@ -984,18 +987,20 @@ def stripe_webhook():
 
                     if row or (max_groups is None) or (used < max_groups):
                         if not row:
-                            cur.execute("INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s)",
-                                        (group_id, user_id))
+                            cur.execute(
+                                "INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s)",
+                                (group_id, user_id)
+                            )
                             conn.commit()
 
                         cur.execute("""
                             INSERT INTO groups (group_id, plan_type, plan_owner, plan_remaining, expires_at)
                             VALUES (%s, %s, %s, %s, %s)
                             ON CONFLICT (group_id) DO UPDATE
-                            SET plan_type = EXCLUDED.plan_type,
-                                plan_owner = EXCLUDED.plan_owner,
+                            SET plan_type      = EXCLUDED.plan_type,
+                                plan_owner     = EXCLUDED.plan_owner,
                                 plan_remaining = EXCLUDED.plan_remaining,
-                                expires_at = EXCLUDED.expires_at
+                                expires_at     = EXCLUDED.expires_at
                         """, (group_id, plan_name, user_id, quota, expires_at))
                         conn.commit()
 
@@ -1007,7 +1012,7 @@ def stripe_webhook():
                     else:
                         notify_group_limit(user_id, group_id, max_groups)
             except Exception as e:
-                logging.error("[group binding/upsert] %s", e)
+                logging.error(f"[group binding/upsert] {e}")
                 conn.rollback()
         else:
             send_push_text(
@@ -1016,7 +1021,8 @@ def stripe_webhook():
                 f"✅ {plan_name} plan activated. After adding the bot to a group, type /re to set languages."
             )
 
-    return "OK", 200
+    return "OK"
+
 
 
 # ---------------- 启动服务 ----------------
