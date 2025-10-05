@@ -897,17 +897,23 @@ def notify_group_limit(user_id, group_id, max_groups):
 
 
 # ---------------- Stripe Webhook ----------------
+# ---------------- Stripe Webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
     _ensure_tx_clean()  # 确保事务干净
-    payload = request.get_data(as_text=False)  # 原始字节
+
+    # ✅ 改动1：保持原始字节流，不进行缓存或文本解码
+    payload = request.get_data(cache=False, as_text=False)
     sig_header = request.headers.get("Stripe-Signature", "")
 
     try:
         import stripe
         stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+        # ✅ 改动2：改为从环境变量读取 whsec，而不是固定变量
         event = stripe.Webhook.construct_event(
-            payload, sig_header, STRIPE_WEBHOOK_SECRET
+            payload,
+            sig_header,
+            os.getenv("STRIPE_WEBHOOK_SECRET")
         )
     except Exception as e:
         logging.error(f"Webhook signature verification failed: {e}")
