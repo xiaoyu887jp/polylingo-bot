@@ -900,45 +900,55 @@ def notify_group_limit(user_id, group_id, max_groups):
 def stripe_webhook():
     _ensure_tx_clean()
 
-    # 1) 原始字节 + 头
-    payload = request.get_data(cache=False, as_text=False)
-    sig_header = request.headers.get("Stripe-Signature", "")
+    import traceback, json, stripe
+    stripe.api_key = os.getenv("STRIPE_SECRET_KEY")  # 仍然用 live key
     secret = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
     if not secret:
         logging.error("STRIPE_WEBHOOK_SECRET missing")
         return "Server not configured", 500
 
-    # 2) 诊断日志（排查 Invalid signature 很有用）
+    # 原始字节 + 诊断日志
+    payload = request.get_data(cache=False, as_text=False)
+    sig_header = request.headers.get("Stripe-Signature", "")
     try:
         cl = int(request.headers.get("Content-Length", "0"))
     except Exception:
         cl = -1
-    logging.info("[wh] body_len=%s  content_length=%s  sig[:60]=%s",
+    logging.info("[wh] recv type=? body_len=%s content_length=%s sig[:60]=%s",
                  len(payload), cl, sig_header[:60])
 
-    # 3) 官方验签（你的代码保持不变，只是异常类型更精确）
+    # 先尝试官方验签；失败再兜底从 API 拉取
     try:
-        import stripe
-        stripe.api_key = os.getenv("STRIPE_SECRET_KEY")  # 仍然保留
         event = stripe.Webhook.construct_event(payload, sig_header, secret)
     except stripe.error.SignatureVerificationError as e:
-        logging.error("Webhook signature verification failed: %s", e)
-        return "Invalid signature", 400
+        logging.warning("[wh] signature failed: %s; trying API retrieve fallback", e)
+        try:
+            parsed = json.loads(payload.decode("utf-8"))
+            evt_id = parsed.get("id")
+            if not evt_id:
+                raise ValueError("no event id in payload")
+            event = stripe.Event.retrieve(evt_id)  # 兜底：从 Stripe 取权威事件
+            logging.info("[wh] fallback retrieved event: %s (%s)", evt_id, event.get("type"))
+        except Exception as ee:
+            logging.error("[wh] fallback failed: %s\n%s", ee, traceback.format_exc())
+            return "Invalid signature", 400
     except Exception as e:
-        logging.error("Webhook parse error: %s", e)
+        logging.error("[wh] parse error: %s\n%s", e, traceback.format_exc())
         return "Bad payload", 400
 
     etype = event.get("type")
+    logging.info("[wh] handling event type=%s id=%s", etype, event.get("id"))
+
     if etype == "checkout.session.completed":
         obj = event["data"]["object"]
 
-        user_id   = obj.get("client_reference_id")
+        user_id   = (obj.get("client_reference_id") or "").strip()
         md        = obj.get("metadata") or {}
         plan_name = (md.get("plan") or "").strip().capitalize()
-        group_id  = (md.get("group_id") or "").strip() or None   # ← 空串归为 None
-        # sub_id  = obj.get("subscription")  # 目前未使用，可留作调试
+        group_id  = (md.get("group_id") or "").strip() or None  # 空串→None
 
         if (not user_id) or (plan_name not in PLANS):
+            logging.warning("[wh] skip: user_id=%r plan=%r", user_id, plan_name)
             return "OK"
 
         max_groups = PLANS[plan_name]["max_groups"]
@@ -947,7 +957,7 @@ def stripe_webhook():
         import datetime
         expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
 
-        # ---------- 1) upsert user_plans ----------
+        # 1) upsert user_plans（幂等）
         try:
             cur.execute("""
                 INSERT INTO user_plans (user_id, plan_type, max_groups, expires_at)
@@ -958,12 +968,13 @@ def stripe_webhook():
                     expires_at = EXCLUDED.expires_at
             """, (user_id, plan_name, max_groups, expires_at))
             conn.commit()
+            logging.info("[wh] upsert user_plans ok: user=%s plan=%s", user_id, plan_name)
         except Exception as e:
-            logging.error("[user_plans upsert] %s", e)
+            logging.error("[wh] user_plans upsert failed: %s\n%s", e, traceback.format_exc())
             conn.rollback()
-            return "OK"
+            return "OK"  # 不抛 500，避免 Stripe 无限重试
 
-        # ---------- 2) group_id 绑定 + 充值 ----------
+        # 2) 有 group_id 才做绑定 + 充值（幂等）
         if group_id:
             try:
                 cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
@@ -996,6 +1007,7 @@ def stripe_webhook():
                                 expires_at = EXCLUDED.expires_at
                         """, (group_id, plan_name, user_id, quota, expires_at))
                         conn.commit()
+                        logging.info("[wh] upsert groups ok: gid=%s plan=%s quota=%s", group_id, plan_name, quota)
 
                         send_push_text(
                             user_id,
@@ -1007,8 +1019,9 @@ def stripe_webhook():
                     else:
                         notify_group_limit(user_id, group_id, max_groups)
             except Exception as e:
-                logging.error("[group binding/upsert] %s", e)
+                logging.error("[wh] group binding/upsert failed: %s\n%s", e, traceback.format_exc())
                 conn.rollback()
+
         else:
             send_push_text(
                 user_id,
