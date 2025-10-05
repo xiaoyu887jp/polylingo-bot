@@ -895,40 +895,48 @@ def notify_group_limit(user_id, group_id, max_groups):
         f"⚠️ You already used up {max_groups} groups. Please /unbind old groups or upgrade."
     )
 
-
-# ---------------- Stripe Webhook ----------------
 # ---------------- Stripe Webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
-    _ensure_tx_clean()  # 确保事务干净
+    _ensure_tx_clean()
 
-    # ✅ 改动1：保持原始字节流，不进行缓存或文本解码
+    # 1) 原始字节 + 头
     payload = request.get_data(cache=False, as_text=False)
     sig_header = request.headers.get("Stripe-Signature", "")
+    secret = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
+    if not secret:
+        logging.error("STRIPE_WEBHOOK_SECRET missing")
+        return "Server not configured", 500
 
+    # 2) 诊断日志（排查 Invalid signature 很有用）
+    try:
+        cl = int(request.headers.get("Content-Length", "0"))
+    except Exception:
+        cl = -1
+    logging.info("[wh] body_len=%s  content_length=%s  sig[:60]=%s",
+                 len(payload), cl, sig_header[:60])
+
+    # 3) 官方验签（你的代码保持不变，只是异常类型更精确）
     try:
         import stripe
-        stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
-        # ✅ 改动2：改为从环境变量读取 whsec，而不是固定变量
-        event = stripe.Webhook.construct_event(
-            payload,
-            sig_header,
-            os.getenv("STRIPE_WEBHOOK_SECRET")
-        )
-    except Exception as e:
-        logging.error(f"Webhook signature verification failed: {e}")
+        stripe.api_key = os.getenv("STRIPE_SECRET_KEY")  # 仍然保留
+        event = stripe.Webhook.construct_event(payload, sig_header, secret)
+    except stripe.error.SignatureVerificationError as e:
+        logging.error("Webhook signature verification failed: %s", e)
         return "Invalid signature", 400
+    except Exception as e:
+        logging.error("Webhook parse error: %s", e)
+        return "Bad payload", 400
 
     etype = event.get("type")
-
     if etype == "checkout.session.completed":
         obj = event["data"]["object"]
 
         user_id   = obj.get("client_reference_id")
         md        = obj.get("metadata") or {}
         plan_name = (md.get("plan") or "").strip().capitalize()
-        group_id  = md.get("group_id")
-        sub_id    = obj.get("subscription")
+        group_id  = (md.get("group_id") or "").strip() or None   # ← 空串归为 None
+        # sub_id  = obj.get("subscription")  # 目前未使用，可留作调试
 
         if (not user_id) or (plan_name not in PLANS):
             return "OK"
@@ -939,7 +947,7 @@ def stripe_webhook():
         import datetime
         expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
 
-        # ---------- 1. 写入 / 更新用户套餐 ----------
+        # ---------- 1) upsert user_plans ----------
         try:
             cur.execute("""
                 INSERT INTO user_plans (user_id, plan_type, max_groups, expires_at)
@@ -951,11 +959,11 @@ def stripe_webhook():
             """, (user_id, plan_name, max_groups, expires_at))
             conn.commit()
         except Exception as e:
-            logging.error(f"[user_plans upsert] {e}")
+            logging.error("[user_plans upsert] %s", e)
             conn.rollback()
             return "OK"
 
-        # ---------- 2. 如果有 group_id，绑定群并充值额度 ----------
+        # ---------- 2) group_id 绑定 + 充值 ----------
         if group_id:
             try:
                 cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
@@ -991,13 +999,15 @@ def stripe_webhook():
 
                         send_push_text(
                             user_id,
-                            f"✅ {plan_name} 套餐已启用，群 {group_id} 获得 {quota} 字额度，有效期至 {expires_at} (UTC)。\n\n"
-                            f"✅ {plan_name} plan activated. Group {group_id} has {quota} characters. Valid until {expires_at} (UTC)."
+                            f"✅ {plan_name} 套餐已启用，群 {group_id} 获得 {quota} 字额度，"
+                            f"有效期至 {expires_at} (UTC)。\n\n"
+                            f"✅ {plan_name} plan activated. Group {group_id} has {quota} characters. "
+                            f"Valid until {expires_at} (UTC)."
                         )
                     else:
                         notify_group_limit(user_id, group_id, max_groups)
             except Exception as e:
-                logging.error(f"[group binding/upsert] {e}")
+                logging.error("[group binding/upsert] %s", e)
                 conn.rollback()
         else:
             send_push_text(
@@ -1007,7 +1017,6 @@ def stripe_webhook():
             )
 
     return "OK"
-
 
 # ---------------- 启动服务 ----------------
 if __name__ == "__main__":
