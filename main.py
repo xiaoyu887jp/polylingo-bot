@@ -894,43 +894,41 @@ def notify_group_limit(user_id, group_id, max_groups):
         f"⚠️ 你已绑定 {max_groups} 个群，无法再绑定群 {group_id}。\n"
         f"⚠️ You already used up {max_groups} groups. Please /unbind old groups or upgrade."
     )
-# ---------------- Stripe Webhook ----------------
-from stripe.error import SignatureVerificationError  # 关键：正确的异常类
 
+# ---------------- Stripe Webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
     _ensure_tx_clean()  # 确保事务干净
 
-    # 读取并清理端点密钥（防止复制时混入空格/换行）
+    # 读取端点密钥并去掉可能的空格/换行（复制时最常见问题）
     endpoint_secret = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
     if not endpoint_secret:
         logging.error("[wh] missing STRIPE_WEBHOOK_SECRET")
         return "Misconfigured", 500
 
-    # ✅ 一定用“字符串”读取原始请求体（与 Stripe 官方 Flask 示例一致）
-    #   不要在验签前做任何 JSON 解析或替换操作
+    # ✅ 一定用字符串读取原始请求体；验签前不要做 json.loads 等处理
     payload = request.get_data(as_text=True)
     sig_header = request.headers.get("Stripe-Signature", "")
 
-    # 轻量日志（不含敏感数据）
+    # 轻量日志（不记录敏感内容）
     try:
-        tkn = sig_header.split(",")[0] if sig_header else ""
-        logging.info(f"[wh] recv Stripe event: payload_len={len(payload)} sig_head={tkn}")
+        logging.info(f"[wh] recv Stripe event: payload_len={len(payload)} sig_head={sig_header.split(',')[0] if sig_header else ''}")
     except Exception:
         pass
 
-    # 先验签，再取 event
+    # 先验签，再取 event；不依赖 stripe.error 子模块，避免导入失败
     try:
         event = stripe.Webhook.construct_event(
-            payload=payload,                 # 字符串
+            payload=payload,          # 字符串
             sig_header=sig_header,
             secret=endpoint_secret
         )
-    except SignatureVerificationError as e:
-        logging.error(f"[wh] invalid signature: {e}")
-        return "Invalid signature", 400
     except Exception as e:
-        logging.exception("[wh] construct_event failed")
+        name = getattr(e, "__class__", type(e)).__name__
+        if name == "SignatureVerificationError":
+            logging.error(f"[wh] invalid signature: {e}")
+            return "Invalid signature", 400
+        logging.exception(f"[wh] construct_event failed ({name})")
         return "Bad request", 400
 
     etype = event.get("type")
@@ -954,7 +952,7 @@ def stripe_webhook():
         import datetime
         expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
 
-        # ---------- 1) 写 / 更新 user_plans ----------
+        # ---------- 1) 写/更新 user_plans ----------
         try:
             cur.execute("""
                 INSERT INTO user_plans (user_id, plan_type, max_groups, expires_at)
@@ -970,7 +968,7 @@ def stripe_webhook():
             conn.rollback()
             return "OK"
 
-        # ---------- 2) 有 group_id 则绑定并充值 ----------
+        # ---------- 2) 绑定群并充值（若带 group_id） ----------
         if group_id:
             try:
                 cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
@@ -1022,8 +1020,6 @@ def stripe_webhook():
             )
 
     return "OK"
-
-
 
 # ---------------- 启动服务 ----------------
 if __name__ == "__main__":
