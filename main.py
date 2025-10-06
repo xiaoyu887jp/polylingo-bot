@@ -214,21 +214,27 @@ def send_reply_message(reply_token, messages):
         logging.warning(f"[reply] failed: {e}")
 
 
-def send_push_text(to_id: str, text: str):
+def send_push_text(to_id: str, text: str) -> int:
     headers = {
         "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
         "Content-Type": "application/json",
     }
-    body = {"to": to_id, "messages": [{"type": "text", "text": text}]}
+    # 文本长度保护，避免 400
+    body = {"to": to_id, "messages": [{"type": "text", "text": text[:4900]}]}
     try:
-        HTTP.post(
+        r = HTTP.post(
             "https://api.line.me/v2/bot/message/push",
             headers=headers,
             json=body,
             timeout=5,
         )
+        # 关键日志：看到发给谁、状态码是多少
+        logging.info(f"[push] to={to_id} status={r.status_code} resp={r.text[:120]}")
+        return r.status_code
     except Exception as e:
-        logging.warning(f"[push] failed: {e}")
+        logging.error(f"[push] exception: {e}")
+        return 0
+
 
 
 def is_friend(user_id: str):
