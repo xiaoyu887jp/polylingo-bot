@@ -913,7 +913,7 @@ def stripe_webhook():
         return "Misconfigured", 500
 
     # ✅ 一定用字符串读取原始请求体；验签前不要做 json.loads 等处理
-    payload = request.get_data(as_text=True)
+    payload = request.get_data(cache=False, as_text=False)
     sig_header = request.headers.get("Stripe-Signature", "")
 
     # 轻量日志（不记录敏感内容）
