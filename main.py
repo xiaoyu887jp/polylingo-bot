@@ -629,7 +629,6 @@ def success():
 def cancel():
     return "❌ Payment canceled. You can close this page."
 
-
 # ---------------- LINE Webhook ----------------
 from psycopg2 import extensions
 
@@ -800,6 +799,41 @@ def line_webhook():
             if not group_id:
                 continue
 
+            # ===== B3.5) 授权/名额门禁（修复点）=====
+            # 规则：优先看“群是否已有套餐”。有套餐就放行；没有套餐才看“发送者是否名额已满”，满则提示并拦截。
+            try:
+                # 1) 群级套餐检查
+                cur.execute("""
+                    SELECT plan_type, plan_owner, plan_remaining, expires_at
+                    FROM groups
+                    WHERE group_id=%s
+                """, (group_id,))
+                g = cur.fetchone()
+                if not g:
+                    # 2) 群没有套餐：检查发送者的可绑定名额
+                    cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=%s", (user_id,))
+                    up = cur.fetchone()
+                    if up:
+                        plan_type, max_groups = up
+                        cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
+                        used = (cur.fetchone() or [0])[0] or 0
+                        if (max_groups is not None) and (used >= max_groups):
+                            buy_url = build_buy_link(user_id, group_id)
+                            msg = (
+                                f"⚠️ 你的 {plan_type} 套餐最多可綁定 {max_groups} 個群組。\n"
+                                f"本群尚未授權，已暫停翻譯。\n\n"
+                                f"👉 在已綁定的舊群輸入 /unbind 可釋放名額；\n"
+                                f"👉 或升級套餐以增加可綁定群數：\n{buy_url}\n\n"
+                                f"⚠️ Your {plan_type} plan allows up to {max_groups} groups.\n"
+                                f"This group is not authorized; translation paused.\n"
+                                f"Use /unbind in an old group, or upgrade here:\n{buy_url}"
+                            )
+                            send_reply_message(reply_token, [{"type": "text", "text": msg[:4900]}])
+                            continue  # 不翻译，直接提示
+            except Exception as e:
+                logging.error(f"[bind gate] {e}")
+                # 出错时放行，避免意外挡住翻译
+
             # B4) 收集语言
             cur.execute("SELECT target_lang FROM user_prefs WHERE group_id=%s AND user_id=%s", (group_id, user_id))
             configured = [row[0].lower() for row in cur.fetchall() if row and row[0]]
@@ -814,62 +848,6 @@ def line_webhook():
             if not targets:
                 continue
 
-            # === B4.1) 付费套餐群组授权拦截（关键修复）===
-            # 若用户有有效套餐且允许绑定的群数>0：当前群必须在授权内；否则提示购买/解绑，并直接不翻译。
-            try:
-                cur.execute("SELECT plan_type, max_groups, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
-                up = cur.fetchone()
-            except Exception as e:
-                logging.error(f"[binding guard] check plan failed: {e}")
-                up = None
-
-            if up:
-                import datetime
-                plan_type, max_groups, up_expires = up
-                expired = False
-                if up_expires:
-                    try:
-                        expired = datetime.datetime.utcnow() > datetime.datetime.fromisoformat(up_expires)
-                    except Exception:
-                        pass
-
-                if (not expired) and (max_groups is not None) and (max_groups > 0):
-                    # 当前群绑定归属
-                    cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
-                    gb = cur.fetchone()
-
-                    if gb:
-                        # 已绑定但不是自己的群 → 不允许用你的套餐；且不回退到免费额度
-                        if gb[0] != user_id:
-                            buy_url = build_buy_link(user_id, group_id)
-                            send_reply_message(reply_token, [{
-                                "type": "text",
-                                "text": (
-                                    "⚠️ 本群已綁定到其他帳號，無法使用你的套餐。\n"
-                                    "如需在此群使用，請聯繫原帳號在本群輸入 /unbind，或升級你的套餐：\n"
-                                    f"{buy_url}"
-                                )
-                            }])
-                            continue
-                    else:
-                        # 未绑定：检查是否已用满名额
-                        cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
-                        used = (cur.fetchone() or [0])[0] or 0
-                        if used >= max_groups:
-                            buy_url = build_buy_link(user_id, group_id)
-                            send_reply_message(reply_token, [{
-                                "type": "text",
-                                "text": (
-                                    f"⚠️ 你的 {plan_type} 套餐最多可綁定 {max_groups} 個群組。\n"
-                                    "本群尚未授權，已暫停翻譯。\n\n"
-                                    "👉 在已綁定的舊群輸入 /unbind 可釋放名額；\n"
-                                    f"👉 或升級套餐以增加可綁定群數：\n{buy_url}"
-                                )
-                            }])
-                            continue
-            # === 授权拦截结束 ===
-
-            # （到这里表示已通过授权校验，可以继续进入翻译流程）
             profile = get_user_profile_cached(user_id, group_id) or {}
             icon = profile.get("pictureUrl") or BOT_AVATAR_FALLBACK
             display_name = (profile.get("displayName") or "User")[:20]
@@ -913,7 +891,7 @@ def line_webhook():
                     if atomic_deduct_group_quota(group_id, chars_used):
                         used_paid = True
 
-                # 群套餐过期提示（已修改为中英文）
+                # 群套餐过期提示（中英）
                 if not used_paid and expired:
                     buy_url = build_buy_link(user_id, group_id)
                     msg = (
@@ -923,7 +901,7 @@ def line_webhook():
                     send_reply_message(reply_token, [{"type": "text", "text": msg}])
                     continue
 
-                # 群额度不足提示（仍是英文）
+                # 群额度不足提示
                 elif not used_paid and plan_remaining is not None and plan_remaining < chars_used:
                     buy_url = build_buy_link(user_id, group_id)
                     msg = f"Your group quota is not enough. Please purchase more here:\n{buy_url}"
@@ -952,13 +930,6 @@ def line_webhook():
                 send_reply_message(reply_token, messages[:5])
 
     return "OK"
-    
-def notify_group_limit(user_id, group_id, max_groups):
-    send_push_text(
-        user_id,
-        f"⚠️ 你已绑定 {max_groups} 个群，无法再绑定群 {group_id}。\n"
-        f"⚠️ You already used up {max_groups} groups. Please /unbind old groups or upgrade."
-    )
 
 # ---------------- Stripe Webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
