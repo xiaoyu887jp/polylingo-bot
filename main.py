@@ -649,7 +649,8 @@ def line_webhook():
 
     # 校验签名
     signature = request.headers.get("X-Line-Signature", "")
-    body = request.get_data(as_text=True)
+    # ✅ 用字符串读取原始请求体（最稳定）
+    body = request.get_data(cache=False, as_text=True)
     if LINE_CHANNEL_SECRET:
         digest = hmac.new(LINE_CHANNEL_SECRET.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).digest()
         valid_signature = base64.b64encode(digest).decode("utf-8")
