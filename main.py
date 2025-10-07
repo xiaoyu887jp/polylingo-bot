@@ -946,15 +946,14 @@ def stripe_webhook():
         logging.error("[wh] missing STRIPE_WEBHOOK_SECRET")
         return "Misconfigured", 500
 
-    # ✅ 一定用字符串读取原始请求体；验签前不要做 json.loads 等处理
-    payload = request.get_data(cache=False, as_text=False)
+    # ✅ 新增调试日志（替换原先的轻量日志）
+    payload = request.get_data(cache=False, as_text=True)
     sig_header = request.headers.get("Stripe-Signature", "")
 
     # 轻量日志（不记录敏感内容）
-    try:
-        logging.info(f"[wh] recv Stripe event: payload_len={len(payload)} sig_head={sig_header.split(',')[0] if sig_header else ''}")
-    except Exception:
-        pass
+    sig_head_brief = sig_header.split(',')[0] if sig_header else 'none'
+    secret_tail = (endpoint_secret or '')[-6:]   
+    logging.info(f"[wh] recv Stripe event: len={len(payload)} sig_head={sig_head_brief} secret_tail={secret_tail}")   
 
     # 先验签，再取 event；不依赖 stripe.error 子模块，避免导入失败
     try:
