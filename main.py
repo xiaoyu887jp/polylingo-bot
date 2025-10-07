@@ -647,8 +647,6 @@ def _ensure_tx_clean():
 @app.route("/callback", methods=["POST"])
 def line_webhook():
     _ensure_tx_clean()   # ★ 每次请求进来先清理事务状态
-    # 这里继续写 LINE webhook 的处理逻辑
-
 
     # 校验签名
     signature = request.headers.get("X-Line-Signature", "")
@@ -736,7 +734,7 @@ def line_webhook():
                     send_reply_message(reply_token, [{"type":"text","text":"❌ 解除綁定失敗，請稍後再試。"}])
                 continue
 
-            # B2) 语言按钮逻辑
+            # B2) 语言按钮逻辑（点按卡片后的绑定）
             LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
             tnorm = text.strip().lower()
             if tnorm in LANG_CODES:
@@ -781,7 +779,12 @@ def line_webhook():
                             conn.commit()
                             msg = "✅ 群绑定成功。"
                         else:
-                            msg = f"⚠️ 你的套餐最多可綁定 {max_groups} 個群組。請在舊群輸入 /unbind 解除綁定，或升級套餐。"
+                            # ★ 已达上限：提示 + 购买链接
+                            buy_url = build_buy_link(user_id, group_id)
+                            msg = (
+                                f"⚠️ 你的套餐最多可綁定 {max_groups} 個群組。\n"
+                                f"請在舊群輸入 /unbind 解除綁定，或升級套餐：\n{buy_url}"
+                            )
                         send_reply_message(reply_token, [{"type": "text", "text": msg}])
                         continue
                     except Exception as e:
@@ -811,6 +814,62 @@ def line_webhook():
             if not targets:
                 continue
 
+            # === B4.1) 付费套餐群组授权拦截（关键修复）===
+            # 若用户有有效套餐且允许绑定的群数>0：当前群必须在授权内；否则提示购买/解绑，并直接不翻译。
+            try:
+                cur.execute("SELECT plan_type, max_groups, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
+                up = cur.fetchone()
+            except Exception as e:
+                logging.error(f"[binding guard] check plan failed: {e}")
+                up = None
+
+            if up:
+                import datetime
+                plan_type, max_groups, up_expires = up
+                expired = False
+                if up_expires:
+                    try:
+                        expired = datetime.datetime.utcnow() > datetime.datetime.fromisoformat(up_expires)
+                    except Exception:
+                        pass
+
+                if (not expired) and (max_groups is not None) and (max_groups > 0):
+                    # 当前群绑定归属
+                    cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
+                    gb = cur.fetchone()
+
+                    if gb:
+                        # 已绑定但不是自己的群 → 不允许用你的套餐；且不回退到免费额度
+                        if gb[0] != user_id:
+                            buy_url = build_buy_link(user_id, group_id)
+                            send_reply_message(reply_token, [{
+                                "type": "text",
+                                "text": (
+                                    "⚠️ 本群已綁定到其他帳號，無法使用你的套餐。\n"
+                                    "如需在此群使用，請聯繫原帳號在本群輸入 /unbind，或升級你的套餐：\n"
+                                    f"{buy_url}"
+                                )
+                            }])
+                            continue
+                    else:
+                        # 未绑定：检查是否已用满名额
+                        cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
+                        used = (cur.fetchone() or [0])[0] or 0
+                        if used >= max_groups:
+                            buy_url = build_buy_link(user_id, group_id)
+                            send_reply_message(reply_token, [{
+                                "type": "text",
+                                "text": (
+                                    f"⚠️ 你的 {plan_type} 套餐最多可綁定 {max_groups} 個群組。\n"
+                                    "本群尚未授權，已暫停翻譯。\n\n"
+                                    "👉 在已綁定的舊群輸入 /unbind 可釋放名額；\n"
+                                    f"👉 或升級套餐以增加可綁定群數：\n{buy_url}"
+                                )
+                            }])
+                            continue
+            # === 授权拦截结束 ===
+
+            # （到这里表示已通过授权校验，可以继续进入翻译流程）
             profile = get_user_profile_cached(user_id, group_id) or {}
             icon = profile.get("pictureUrl") or BOT_AVATAR_FALLBACK
             display_name = (profile.get("displayName") or "User")[:20]
