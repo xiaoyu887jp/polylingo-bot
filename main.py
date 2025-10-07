@@ -904,7 +904,10 @@ def line_webhook():
                 # 群额度不足提示
                 elif not used_paid and plan_remaining is not None and plan_remaining < chars_used:
                     buy_url = build_buy_link(user_id, group_id)
-                    msg = f"Your group quota is not enough. Please purchase more here:\n{buy_url}"
+                    msg = (
+                        f"⚠️ 本群翻譯額度不足。\n"
+                        f"⚠️ Your group quota is not enough. Please purchase more here:\n{buy_url}"
+                    )   
                     send_reply_message(reply_token, [{"type": "text", "text": msg}])
                     continue
 
