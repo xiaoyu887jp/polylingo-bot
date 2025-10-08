@@ -949,6 +949,7 @@ def stripe_webhook():
     # ✅ 新增调试日志（替换原先的轻量日志）
     payload = request.get_data(as_text=True)   # ✅ 原始请求体（字符串）
     sig_header = request.headers.get("Stripe-Signature", None)
+    logging.info(f"[wh] recv Stripe event: payload_len={len(payload)} sig_head={sig_header}")
 
     # 轻量日志（不记录敏感内容）
     sig_head_brief = sig_header.split(',')[0] if sig_header else 'none'
