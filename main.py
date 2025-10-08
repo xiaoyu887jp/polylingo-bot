@@ -945,6 +945,7 @@ def stripe_webhook():
     if not endpoint_secret:
         logging.error("[wh] missing STRIPE_WEBHOOK_SECRET")
         return "Misconfigured", 500
+        logging.info(f"[wh] using secret tail={endpoint_secret[-6:] if endpoint_secret else 'None'}")
 
     # ✅ 新增调试日志（替换原先的轻量日志）
     payload = request.get_data(as_text=True)   # ✅ 原始请求体（字符串）
