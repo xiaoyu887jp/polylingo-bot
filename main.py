@@ -947,7 +947,7 @@ def stripe_webhook():
         return "Misconfigured", 500
 
     # ✅ 新增调试日志（替换原先的轻量日志）
-    payload = request.get_data(cache=False, as_text=True)
+    payload = request.get_data(cache=False)  # ⚠️ 不加 as_text
     sig_header = request.headers.get("Stripe-Signature", "")
 
     # 轻量日志（不记录敏感内容）
