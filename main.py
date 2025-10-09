@@ -1054,6 +1054,7 @@ def stripe_webhook():
 
     return "OK", 200
 
+
 # ---------------- 启动服务 ----------------
 if __name__ == "__main__":
     # 仅供本地调试使用；在 Render 会由 Gunicorn 加载，不会走这里
