@@ -15,6 +15,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from concurrent.futures import ThreadPoolExecutor
 from linebot import LineBotApi  # 仅为兼容保留，不直接使用
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
 # ---------------- Stripe ----------------
 import stripe
@@ -936,9 +937,9 @@ def line_webhook():
     return "OK"
 
 # ---------------- Stripe Webhook (final debug-ready) ----------------
-import binascii
-import hashlib
-import hmac
+import os, re, hmac, hashlib, binascii, logging
+from flask import request
+import stripe
 
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
@@ -949,66 +950,65 @@ def stripe_webhook():
         logging.error("[wh] missing STRIPE_WEBHOOK_SECRET")
         return "Misconfigured", 500
 
-    # 1) 一律用原始字节（最稳妥）
-    payload = request.get_data()  # 等价于 request.data, bytes
+    # 与 Stripe 官方示例保持一致：把 payload 当成字符串
+    payload = request.get_data(as_text=True)
     sig_header = request.headers.get("Stripe-Signature", "") or ""
 
-    # 2) 采集关键请求头
-    h_ct  = request.headers.get("Content-Type", "")
-    h_cl  = request.headers.get("Content-Length", "")
-    h_te  = request.headers.get("Transfer-Encoding", "")
-    h_ce  = request.headers.get("Content-Encoding", "")
-    h_ua  = request.headers.get("User-Agent", "")
+    # 采集关键请求头
+    h_ct = request.headers.get("Content-Type", "")
+    h_cl = request.headers.get("Content-Length", "")
+    h_te = request.headers.get("Transfer-Encoding", "")
+    h_ce = request.headers.get("Content-Encoding", "")
+    h_ua = request.headers.get("User-Agent", "")
 
-    # 3) 解析签名头：t=..., v1=...
+    # 解析签名头：t=..., v1=...
     t_val = ""
     v1_list = []
     try:
-        parts = [p.strip() for p in sig_header.split(",") if "=" in p]
-        kv = dict(p.split("=", 1) for p in parts)
-        t_val = kv.get("t", "")
-        v1_list = [p.split("=",1)[1] for p in parts if p.startswith("v1=")]
+        import re
+        t_m = re.search(r"t=([^,]+)", sig_header)
+        t_val = t_m.group(1) if t_m else ""
+        v1_list = re.findall(r"v1=([0-9a-f]+)", sig_header)
     except Exception:
         pass
 
-    # 4) 计算我们本地的 v1 指纹（只打印前 16 位，避免泄露）
+    # 计算我们本地的 v1 指纹（只打印前 16 位，避免泄露）
     calc_v1_prefix = "NA"
     try:
-        # Stripe v1: HMAC_SHA256(secret, f"{t}.{raw_body}")
-        signed = (t_val + ".").encode("utf-8") + payload
+        signed = f"{t_val}.{payload}".encode("utf-8")
         digest = hmac.new(endpoint_secret.encode("utf-8"), signed, hashlib.sha256).hexdigest()
         calc_v1_prefix = digest[:16]
     except Exception as e:
         logging.error(f"[wh-debug] hmac calc failed: {e}")
 
-    # 5) 取对端 v1 的前 16 位（可能有多个 v1）
+    # 载荷首尾各 16 字节指纹（十六进制），排查末尾是否多 \n 或 BOM
+    pbytes = payload.encode("utf-8")
+    head_hex = binascii.hexlify(pbytes[:16]).decode("ascii") if pbytes else ""
+    tail_hex = binascii.hexlify(pbytes[-16:]).decode("ascii") if pbytes else ""
     header_v1_prefixes = ",".join([v[:16] for v in v1_list]) if v1_list else "none"
 
-    # 6) 载荷首尾各 16 字节指纹（十六进制），排查末尾是否多 \n 或 BOM
-    head_hex = binascii.hexlify(payload[:16]).decode("ascii") if len(payload) >= 1 else ""
-    tail_hex = binascii.hexlify(payload[-16:]).decode("ascii") if len(payload) >= 1 else ""
-
-    # 7) 关键对照日志（不会泄密）
     logging.info(
         "[wh] recv len=%s clen=%s ct=%s te=%s ce=%s ua=%s t=%s "
         "v1(calc)=%s v1(head)=%s head16=%s tail16=%s sec_tail=%s",
-        len(payload), h_cl, h_ct, h_te, h_ce, h_ua, t_val,
+        len(pbytes), h_cl, h_ct, h_te, h_ce, h_ua, t_val,
         calc_v1_prefix, header_v1_prefixes, head_hex, tail_hex, endpoint_secret[-6:]
     )
 
-    # 8) 正式验签（官方方法）
+    # 官方验签（字符串 payload）
     try:
         event = stripe.Webhook.construct_event(
-            payload=payload,          # bytes，保持原样
+            payload=payload,
             sig_header=sig_header,
             secret=endpoint_secret
         )
-    except Exception as e:
-        # 这里继续保留 400，避免 Stripe 重试过多；日志里已有完整指纹可定位
+    except stripe.error.SignatureVerificationError as e:
         logging.error(f"[wh] invalid signature: {e}")
         return "Invalid signature", 400
+    except Exception as e:
+        logging.error(f"[wh] bad payload: {e}")
+        return "Bad payload", 400
 
-    # 9) 业务处理
+    # ======= 下面是你的原有业务逻辑（未改动） =======
     etype = event.get("type")
     obj   = (event.get("data") or {}).get("object") or {}
 
@@ -1029,7 +1029,6 @@ def stripe_webhook():
         import datetime
         expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
 
-        # 1) 写/更新 user_plans
         try:
             cur.execute("""
                 INSERT INTO user_plans (user_id, plan_type, max_groups, expires_at)
@@ -1045,7 +1044,6 @@ def stripe_webhook():
             conn.rollback()
             return "OK", 200
 
-        # 2) group 充值/绑定
         if group_id:
             try:
                 cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
