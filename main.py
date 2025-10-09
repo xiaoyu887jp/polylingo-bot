@@ -938,43 +938,37 @@ def line_webhook():
 # ---------------- Stripe Webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
-    _ensure_tx_clean()  # 确保事务干净
+    _ensure_tx_clean()
 
-    # 读取端点密钥并去掉可能的空格/换行（复制时最常见问题）
     endpoint_secret = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
     if not endpoint_secret:
         logging.error("[wh] missing STRIPE_WEBHOOK_SECRET")
         return "Misconfigured", 500
-        logging.info(f"[wh] using secret tail={endpoint_secret[-6:] if endpoint_secret else 'None'}")
 
-    # ✅ 新增调试日志（替换原先的轻量日志）
-    payload = request.get_data(as_text=True)   # ✅ 原始请求体（字符串）
-    sig_header = request.headers.get("Stripe-Signature", None)
-    logging.info(f"[wh] recv Stripe event: payload_len={len(payload)} sig_head={sig_header}")
+    # ✅ 一定用原始字节，不要 as_text=True
+    payload = request.get_data(cache=False, as_text=False)  # bytes
+    sig_header = request.headers.get("Stripe-Signature", "") or ""
 
-    # 轻量日志（不记录敏感内容）
-    sig_head_brief = sig_header.split(',')[0] if sig_header else 'none'
-    secret_tail = (endpoint_secret or '')[-6:]   
-    logging.info(f"[wh] recv Stripe event: len={len(payload)} sig_head={sig_head_brief} secret_tail={secret_tail}")   
+    # 关键对照日志（不会泄露敏感数据）
+    try:
+        clen = request.headers.get("Content-Length", "unknown")
+        logging.info(f"[wh] recv len={len(payload)} clen={clen} sig={sig_header.split(',')[0] if sig_header else 'none'} sec_tail={endpoint_secret[-6:]}")
+    except Exception:
+        pass
 
-    # 先验签，再取 event；不依赖 stripe.error 子模块，避免导入失败
+    # Stripe 官方验签（不要自己改写）
     try:
         event = stripe.Webhook.construct_event(
-            payload=payload,          # 字符串
+            payload=payload,          # bytes
             sig_header=sig_header,
             secret=endpoint_secret
         )
     except Exception as e:
-        name = getattr(e, "__class__", type(e)).__name__
-        if name == "SignatureVerificationError":
-            logging.error(f"[wh] invalid signature: {e}")
-            return "Invalid signature", 400
-        logging.exception(f"[wh] construct_event failed ({name})")
-        return "Bad request", 400
+        logging.error(f"[wh] invalid signature: {e}")
+        return "Invalid signature", 400
 
     etype = event.get("type")
-    data  = event.get("data", {}) or {}
-    obj   = data.get("object", {}) or {}
+    obj   = (event.get("data") or {}).get("object") or {}
 
     if etype == "checkout.session.completed":
         user_id   = obj.get("client_reference_id")
@@ -993,7 +987,7 @@ def stripe_webhook():
         import datetime
         expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
 
-        # ---------- 1) 写/更新 user_plans ----------
+        # 1) 写/更新 user_plans
         try:
             cur.execute("""
                 INSERT INTO user_plans (user_id, plan_type, max_groups, expires_at)
@@ -1005,19 +999,19 @@ def stripe_webhook():
             """, (user_id, plan_name, max_groups, expires_at))
             conn.commit()
         except Exception as e:
-            logging.error(f"[user_plans upsert] {e}")
+            logging.error(f"[wh] user_plans upsert: {e}")
             conn.rollback()
             return "OK"
 
-        # ---------- 2) 绑定群并充值（若带 group_id） ----------
+        # 2) 若带 group_id：绑定并充值群额度
         if group_id:
             try:
                 cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
                 row = cur.fetchone()
+
                 if row and row[0] and row[0] != user_id:
-                    send_push_text(
-                        user_id,
-                        f"⚠️ 群 {group_id} 已绑定到其他账号，无法重复绑定。\n"
+                    send_push_text(user_id,
+                        f"⚠️ 群 {group_id} 已綁定到其他帳號，無法重複綁定。\n"
                         f"⚠️ Group {group_id} is already bound to another account."
                     )
                 else:
@@ -1043,24 +1037,22 @@ def stripe_webhook():
                         """, (group_id, plan_name, user_id, quota, expires_at))
                         conn.commit()
 
-                        send_push_text(
-                            user_id,
-                            f"✅ {plan_name} 套餐已启用，群 {group_id} 获得 {quota} 字额度，有效期至 {expires_at} (UTC)。\n\n"
-                            f"✅ {plan_name} plan activated. Group {group_id} has {quota} characters. Valid until {expires_at} (UTC)."
+                        send_push_text(user_id,
+                            f"✅ {plan_name} 套餐已啟用，群 {group_id} 獲得 {quota} 字，至 {expires_at} (UTC)。\n"
+                            f"✅ {plan_name} activated. Group {group_id} has {quota} chars until {expires_at} (UTC)."
                         )
                     else:
                         notify_group_limit(user_id, group_id, max_groups)
             except Exception as e:
-                logging.error(f"[group binding/upsert] {e}")
+                logging.error(f"[wh] group upsert: {e}")
                 conn.rollback()
         else:
-            send_push_text(
-                user_id,
-                f"✅ {plan_name} 套餐已启用。将机器人加入群后，输入 /re 设置翻译语言。\n\n"
-                f"✅ {plan_name} plan activated. After adding the bot to a group, type /re to set languages."
+            send_push_text(user_id,
+                f"✅ {plan_name} 套餐已啟用。把機器人加入群後，輸入 /re 設定語言。\n"
+                f"✅ {plan_name} plan activated. Add the bot to a group, then type /re."
             )
 
-    return "OK"
+    return "OK", 200
 
 # ---------------- 启动服务 ----------------
 if __name__ == "__main__":
