@@ -935,7 +935,11 @@ def line_webhook():
 
     return "OK"
 
-# ---------------- Stripe Webhook ----------------
+# ---------------- Stripe Webhook (final debug-ready) ----------------
+import binascii
+import hashlib
+import hmac
+
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
     _ensure_tx_clean()
@@ -945,28 +949,66 @@ def stripe_webhook():
         logging.error("[wh] missing STRIPE_WEBHOOK_SECRET")
         return "Misconfigured", 500
 
-    # ✅ 一定用原始字节，不要 as_text=True
-    payload = request.get_data(cache=False, as_text=False)  # bytes
+    # 1) 一律用原始字节（最稳妥）
+    payload = request.get_data()  # 等价于 request.data, bytes
     sig_header = request.headers.get("Stripe-Signature", "") or ""
 
-    # 关键对照日志（不会泄露敏感数据）
+    # 2) 采集关键请求头
+    h_ct  = request.headers.get("Content-Type", "")
+    h_cl  = request.headers.get("Content-Length", "")
+    h_te  = request.headers.get("Transfer-Encoding", "")
+    h_ce  = request.headers.get("Content-Encoding", "")
+    h_ua  = request.headers.get("User-Agent", "")
+
+    # 3) 解析签名头：t=..., v1=...
+    t_val = ""
+    v1_list = []
     try:
-        clen = request.headers.get("Content-Length", "unknown")
-        logging.info(f"[wh] recv len={len(payload)} clen={clen} sig={sig_header.split(',')[0] if sig_header else 'none'} sec_tail={endpoint_secret[-6:]}")
+        parts = [p.strip() for p in sig_header.split(",") if "=" in p]
+        kv = dict(p.split("=", 1) for p in parts)
+        t_val = kv.get("t", "")
+        v1_list = [p.split("=",1)[1] for p in parts if p.startswith("v1=")]
     except Exception:
         pass
 
-    # Stripe 官方验签（不要自己改写）
+    # 4) 计算我们本地的 v1 指纹（只打印前 16 位，避免泄露）
+    calc_v1_prefix = "NA"
+    try:
+        # Stripe v1: HMAC_SHA256(secret, f"{t}.{raw_body}")
+        signed = (t_val + ".").encode("utf-8") + payload
+        digest = hmac.new(endpoint_secret.encode("utf-8"), signed, hashlib.sha256).hexdigest()
+        calc_v1_prefix = digest[:16]
+    except Exception as e:
+        logging.error(f"[wh-debug] hmac calc failed: {e}")
+
+    # 5) 取对端 v1 的前 16 位（可能有多个 v1）
+    header_v1_prefixes = ",".join([v[:16] for v in v1_list]) if v1_list else "none"
+
+    # 6) 载荷首尾各 16 字节指纹（十六进制），排查末尾是否多 \n 或 BOM
+    head_hex = binascii.hexlify(payload[:16]).decode("ascii") if len(payload) >= 1 else ""
+    tail_hex = binascii.hexlify(payload[-16:]).decode("ascii") if len(payload) >= 1 else ""
+
+    # 7) 关键对照日志（不会泄密）
+    logging.info(
+        "[wh] recv len=%s clen=%s ct=%s te=%s ce=%s ua=%s t=%s "
+        "v1(calc)=%s v1(head)=%s head16=%s tail16=%s sec_tail=%s",
+        len(payload), h_cl, h_ct, h_te, h_ce, h_ua, t_val,
+        calc_v1_prefix, header_v1_prefixes, head_hex, tail_hex, endpoint_secret[-6:]
+    )
+
+    # 8) 正式验签（官方方法）
     try:
         event = stripe.Webhook.construct_event(
-            payload=payload,          # bytes
+            payload=payload,          # bytes，保持原样
             sig_header=sig_header,
             secret=endpoint_secret
         )
     except Exception as e:
+        # 这里继续保留 400，避免 Stripe 重试过多；日志里已有完整指纹可定位
         logging.error(f"[wh] invalid signature: {e}")
         return "Invalid signature", 400
 
+    # 9) 业务处理
     etype = event.get("type")
     obj   = (event.get("data") or {}).get("object") or {}
 
@@ -979,7 +1021,7 @@ def stripe_webhook():
 
         if (not user_id) or (plan_name not in PLANS):
             logging.warning(f"[wh] missing params: user_id={user_id} plan={plan_name}")
-            return "OK"
+            return "OK", 200
 
         max_groups = PLANS[plan_name]["max_groups"]
         quota      = PLANS[plan_name]["quota"]
@@ -1001,16 +1043,16 @@ def stripe_webhook():
         except Exception as e:
             logging.error(f"[wh] user_plans upsert: {e}")
             conn.rollback()
-            return "OK"
+            return "OK", 200
 
-        # 2) 若带 group_id：绑定并充值群额度
+        # 2) group 充值/绑定
         if group_id:
             try:
                 cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
                 row = cur.fetchone()
-
                 if row and row[0] and row[0] != user_id:
-                    send_push_text(user_id,
+                    send_push_text(
+                        user_id,
                         f"⚠️ 群 {group_id} 已綁定到其他帳號，無法重複綁定。\n"
                         f"⚠️ Group {group_id} is already bound to another account."
                     )
@@ -1037,7 +1079,8 @@ def stripe_webhook():
                         """, (group_id, plan_name, user_id, quota, expires_at))
                         conn.commit()
 
-                        send_push_text(user_id,
+                        send_push_text(
+                            user_id,
                             f"✅ {plan_name} 套餐已啟用，群 {group_id} 獲得 {quota} 字，至 {expires_at} (UTC)。\n"
                             f"✅ {plan_name} activated. Group {group_id} has {quota} chars until {expires_at} (UTC)."
                         )
@@ -1047,12 +1090,14 @@ def stripe_webhook():
                 logging.error(f"[wh] group upsert: {e}")
                 conn.rollback()
         else:
-            send_push_text(user_id,
+            send_push_text(
+                user_id,
                 f"✅ {plan_name} 套餐已啟用。把機器人加入群後，輸入 /re 設定語言。\n"
                 f"✅ {plan_name} plan activated. Add the bot to a group, then type /re."
             )
 
     return "OK", 200
+
 
 
 # ---------------- 启动服务 ----------------
