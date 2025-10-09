@@ -1064,6 +1064,6 @@ def stripe_webhook():
 
 # ---------------- 启动服务 ----------------
 if __name__ == "__main__":
-    from waitress import serve
-    port = int(os.getenv("PORT", 10000))
-    serve(app, host="0.0.0.0", port=port)
+    # 仅供本地调试使用；在 Render 会由 Gunicorn 加载，不会走这里
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)), debug=False)
+
