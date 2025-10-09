@@ -1,7 +1,8 @@
-waitress
-requests
-flask
-gunicorn  
-line-bot-sdk 
-psycopg2-binary
-stripe
+Flask==2.3.3
+gunicorn==21.2.0
+stripe==13.0.1
+psycopg2-binary==2.9.9
+requests==2.32.3
+urllib3==2.2.2
+line-bot-sdk
+
