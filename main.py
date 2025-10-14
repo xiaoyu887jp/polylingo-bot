@@ -1,22 +1,28 @@
 # -*- coding: utf-8 -*-
 import os
-import time
-import json
+import re
 import hmac
-import base64
 import hashlib
+import binascii
 import logging
+import json
+import time
+import base64
 import psycopg2
 import html
 import requests
+import stripe
 from typing import Optional
 from flask import Flask, request, abort, jsonify
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from concurrent.futures import ThreadPoolExecutor
 from linebot import LineBotApi  # 仅为兼容保留，不直接使用
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
+# 日志配置（若项目里已配置过 logging，可保留一份即可）
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+# Stripe 全局密钥（若已在别处设置，可跳过）
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 # ---------------- Stripe ----------------
 import stripe
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
