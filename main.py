@@ -26,6 +26,15 @@ stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 # ---------------- Stripe ----------------
 import stripe
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
+# 从环境变量读取各 price_id，并建立 price_id -> 套餐名 的映射
+_PRICE_TO_PLAN_RAW = {
+    os.getenv("STRIPE_PRICE_STARTER"): "Starter",
+    os.getenv("STRIPE_PRICE_BASIC"):   "Basic",
+    os.getenv("STRIPE_PRICE_PRO"):     "Pro",
+    os.getenv("STRIPE_PRICE_EXPERT"):  "Expert",
+}
+# 过滤掉可能为空的键，避免 None 或 "" 干扰匹配
+PRICE_TO_PLAN = {k: v for k, v in _PRICE_TO_PLAN_RAW.items() if k}
 
 # ===================== DB 连接 =====================
 DATABASE_URL = os.getenv("DATABASE_URL")
