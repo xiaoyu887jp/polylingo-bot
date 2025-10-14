@@ -19,13 +19,19 @@ from urllib3.util.retry import Retry
 from concurrent.futures import ThreadPoolExecutor
 from linebot import LineBotApi  # 仅为兼容保留，不直接使用
 
-# 日志配置（若项目里已配置过 logging，可保留一份即可）
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
-# Stripe 全局密钥（若已在别处设置，可跳过）
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
-# ---------------- Stripe ----------------
-import stripe
+
+# ✅ 日志配置（一定要在 Flask 实例创建前执行）
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s: %(message)s"
+)
+logging.getLogger().addHandler(logging.StreamHandler())  # 确保日志输出到 Render 控制台
+# ✅ Stripe 全局密钥（从环境变量读取）
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
+
+# ✅ Flask 实例放在这里
+app = Flask(__name__)
+# ---------------- Stripe ----------------
 # 从环境变量读取各 price_id，并建立 price_id -> 套餐名 的映射
 _PRICE_TO_PLAN_RAW = {
     os.getenv("STRIPE_PRICE_STARTER"): "Starter",
@@ -33,9 +39,9 @@ _PRICE_TO_PLAN_RAW = {
     os.getenv("STRIPE_PRICE_PRO"):     "Pro",
     os.getenv("STRIPE_PRICE_EXPERT"):  "Expert",
 }
+
 # 过滤掉可能为空的键，避免 None 或 "" 干扰匹配
 PRICE_TO_PLAN = {k: v for k, v in _PRICE_TO_PLAN_RAW.items() if k}
-
 # ===================== DB 连接 =====================
 DATABASE_URL = os.getenv("DATABASE_URL")
 conn = psycopg2.connect(DATABASE_URL, sslmode="require")
