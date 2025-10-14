@@ -26,10 +26,11 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s: %(message)s"
 )
 logging.getLogger().addHandler(logging.StreamHandler())  # 确保日志输出到 Render 控制台
+
 # ✅ Stripe 全局密钥（从环境变量读取）
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 
-# ✅ Flask 实例放在这里
+# ✅ Flask 实例（必须在日志配置之后）
 app = Flask(__name__)
 # ---------------- Stripe ----------------
 # 从环境变量读取各 price_id，并建立 price_id -> 套餐名 的映射
