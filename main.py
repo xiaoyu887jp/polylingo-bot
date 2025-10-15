@@ -257,6 +257,16 @@ def send_push_text(to_id: str, text: str) -> int:
     except Exception as e:
         logging.error(f"[push] exception: {e}")
         return 0
+        
+def notify_group_limit(user_id, group_id, max_groups):
+    try:
+        send_push_text(
+            user_id,
+            f"⚠️ 已達可綁定群組上限（{max_groups}）。\n"
+            f"⚠️ You've reached the max groups ({max_groups})."
+        )
+    except Exception as e:
+        logging.error(f"[notify_group_limit] {e}")
 
 
 
