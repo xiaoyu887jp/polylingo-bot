@@ -581,7 +581,6 @@ def add_cors_headers(resp):
     resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
     return resp
 
-
 # ===== Carrd 调用：返回 Stripe Checkout 链接 (POST) =====
 @app.route("/create-checkout-session", methods=["POST", "OPTIONS"])
 def create_checkout_session():
@@ -591,33 +590,45 @@ def create_checkout_session():
     if not stripe.api_key:
         return jsonify({"error": "server missing STRIPE_SECRET_KEY"}), 500
 
+    # 获取请求数据
     data = request.get_json(force=True) or {}
-    plan_name = (data.get("plan") or "").strip().capitalize()
-    user_id   = data.get("line_id") or data.get("user_id")
-    group_id  = data.get("group_id")
+    plan = (data.get("plan") or request.args.get("plan") or "").strip().lower()
+    user_id = data.get("line_id") or data.get("user_id")
+    group_id = data.get("group_id")
 
-    if (not plan_name) or (plan_name not in PLANS) or (not user_id):
-        return jsonify({"error": "invalid params"}), 400
+    # ✅ 建立 plan → 环境变量名 映射
+    PLAN_TO_PRICE_ENV = {
+        "starter": "STRIPE_PRICE_STARTER",
+        "basic":   "STRIPE_PRICE_BASIC",
+        "pro":     "STRIPE_PRICE_PRO",
+        "expert":  "STRIPE_PRICE_EXPERT",
+    }
 
-    price_id = PLANS[plan_name].get("price_id")
+    # ✅ 根据 plan 找对应的 price_id
+    price_env = PLAN_TO_PRICE_ENV.get(plan, "")
+    price_id = os.getenv(price_env, "")
+
     if not price_id:
-        return jsonify({"error": f"plan {plan_name} missing price_id"}), 500
+        return jsonify({"error": "Plan not available"}), 400
+
+    if not user_id:
+        return jsonify({"error": "missing user_id"}), 400
 
     try:
+        # ✅ 创建 Stripe Checkout Session
         session = stripe.checkout.Session.create(
             mode="subscription",
-            payment_method_types=["card"],
             line_items=[{"price": price_id, "quantity": 1}],
             success_url="https://saygo-translator.carrd.co#success",
             cancel_url="https://saygo-translator.carrd.co#cancel",
             client_reference_id=user_id,
-            metadata={"plan": plan_name, "group_id": group_id or ""},
+            metadata={"plan": plan, "group_id": group_id or ""},
+            expand=["line_items"],  # ✅ webhook 可直接读取 line_items
         )
         return jsonify({"url": session.url})
     except Exception as e:
         logging.error(f"[Stripe checkout create error] {e}")
         return jsonify({"error": "Stripe error"}), 500
-
 
 # ===== Carrd 按钮 GET 路由 =====
 from flask import redirect
