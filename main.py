@@ -968,53 +968,98 @@ def line_webhook():
 
     return "OK"
 
-# ---------------- Stripe Webhook — single, bytes-only ----------------
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
     _ensure_tx_clean()
 
-    secret = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
-    if not secret:
+    endpoint_secret = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
+    if not endpoint_secret:
         logging.error("[wh] missing STRIPE_WEBHOOK_SECRET")
         return "Misconfigured", 500
 
-    # ✅ 一定用原始字节，不做任何解码或改写
-    payload = request.get_data(cache=False)      # bytes
-    sig = request.headers.get("Stripe-Signature", "") or ""
+    # 关键：把 payload 按“字符串”读取（与 Stripe 官方示例一致）
+    payload = request.get_data(as_text=True)
+    sig_header = request.headers.get("Stripe-Signature", "") or ""
 
-    # 可选：对照日志，便于排查是否被截断/被改写（不会泄露敏感内容）
+    # 采集常用头部，便于排查
+    h_ct = request.headers.get("Content-Type", "")
+    h_cl = request.headers.get("Content-Length", "")
+    h_ua = request.headers.get("User-Agent", "")
+
+    # 解析签名头：t=..., v1=...
+    t_m = re.search(r"t=([^,]+)", sig_header)
+    t_val = t_m.group(1) if t_m else ""
+    v1_list = re.findall(r"v1=([0-9a-f]+)", sig_header)
+
+    # 本地计算 v1（只打印前16位用于对照）
     try:
-        clen = request.headers.get("Content-Length", "unknown")
-        logging.info(f"[wh] recv len={len(payload)} clen={clen} sig={sig.split(',')[0] if sig else 'none'} sec_tail={secret[-6:]}")
-    except Exception:
-        pass
+        signed = f"{t_val}.{payload}".encode("utf-8")
+        calc_v1 = hmac.new(endpoint_secret.encode("utf-8"), signed, hashlib.sha256).hexdigest()
+        calc_v1_prefix = calc_v1[:16]
+    except Exception as e:
+        calc_v1_prefix = "NA"
+        logging.error(f"[wh-debug] hmac calc failed: {e}")
 
-    # ✅ Stripe 官方验签（传 bytes）
+    pbytes = payload.encode("utf-8")
+    head_hex = binascii.hexlify(pbytes[:16]).decode("ascii") if pbytes else ""
+    tail_hex = binascii.hexlify(pbytes[-16:]).decode("ascii") if pbytes else ""
+    header_v1_prefixes = ",".join([v[:16] for v in v1_list]) if v1_list else "none"
+
+    # 临时用 ERROR 打印，确保在 Render Logs 中一定看得到（稳定后可改回 info）
+    logging.error(
+        "[wh-dbg] len=%s ct=%s cl=%s ua=%s t=%s v1(calc)=%s v1(head)=%s head16=%s tail16=%s sec_tail=%s",
+        len(pbytes), h_ct, h_cl, h_ua, t_val,
+        calc_v1_prefix, header_v1_prefixes, head_hex, tail_hex, endpoint_secret[-6:]
+    )
+
+    # 官方验签（传入“字符串”payload）
     try:
         event = stripe.Webhook.construct_event(
-            payload=payload,          # bytes，不要 as_text=True
-            sig_header=sig,
-            secret=secret
+            payload=payload,
+            sig_header=sig_header,
+            secret=endpoint_secret
         )
     except stripe.error.SignatureVerificationError as e:
         logging.error(f"[wh] invalid signature: {e}")
         return "Invalid signature", 400
     except Exception as e:
-        logging.error(f"[wh] construct_event error: {e}")
-        return "Bad request", 400
+        logging.error(f"[wh] bad payload: {e}")
+        return "Bad payload", 400
 
+    # ================= 业务处理（保留你的逻辑） =================
     etype = event.get("type")
     obj   = (event.get("data") or {}).get("object") or {}
 
     if etype == "checkout.session.completed":
-        user_id   = obj.get("client_reference_id")
-        md        = obj.get("metadata") or {}
-        plan_name = (md.get("plan") or "").strip().capitalize()
-        group_id  = (md.get("group_id") or "").strip()
-        sub_id    = obj.get("subscription")
+        session_id = obj.get("id")
+        user_id    = obj.get("client_reference_id")
+        md         = obj.get("metadata") or {}
+        group_id   = (md.get("group_id") or "").strip()
 
-        if (not user_id) or (plan_name not in PLANS):
-            logging.warning(f"[wh] missing params: user_id={user_id} plan={plan_name}")
+        # 用 price_id 判定套餐（先从 line_items 取，没有就调用 API 获取）
+        price_id = None
+        try:
+            if obj.get("line_items") and obj["line_items"].get("data"):
+                price_id = obj["line_items"]["data"][0]["price"]["id"]
+            elif session_id:
+                li = stripe.checkout.Session.list_line_items(session_id, limit=1)
+                if li and li.get("data"):
+                    price_id = li["data"][0]["price"]["id"]
+        except Exception as e:
+            logging.error(f"[wh] fetch line_items failed: {e}")
+
+        plan_name = PRICE_TO_PLAN.get(price_id)
+        if not plan_name:
+            # 注意：仪表盘“Send test webhook”可能没有真实 line_items，这里直接跳过业务更新
+            logging.warning(f"[wh] unknown or missing price_id={price_id}, skip business update")
+            return "OK", 200
+
+        if not user_id:
+            logging.warning("[wh] missing client_reference_id")
+            return "OK", 200
+
+        if plan_name not in PLANS:
+            logging.warning(f"[wh] plan not in PLANS: {plan_name}")
             return "OK", 200
 
         max_groups = PLANS[plan_name]["max_groups"]
@@ -1023,13 +1068,13 @@ def stripe_webhook():
         import datetime
         expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
 
-        # 1) 写/更新用户套餐
+        # 1) 写/更新 user_plans
         try:
             cur.execute("""
                 INSERT INTO user_plans (user_id, plan_type, max_groups, expires_at)
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT (user_id) DO UPDATE
-                SET plan_type  = EXCLUDED.plan_type,
+                SET plan_type = EXCLUDED.plan_type,
                     max_groups = EXCLUDED.max_groups,
                     expires_at = EXCLUDED.expires_at
             """, (user_id, plan_name, max_groups, expires_at))
@@ -1039,12 +1084,11 @@ def stripe_webhook():
             conn.rollback()
             return "OK", 200
 
-        # 2) 若带 group_id：绑定并充值
+        # 2) group 绑定/充值
         if group_id:
             try:
                 cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
                 row = cur.fetchone()
-
                 if row and row[0] and row[0] != user_id:
                     send_push_text(
                         user_id,
@@ -1057,7 +1101,10 @@ def stripe_webhook():
 
                     if row or (max_groups is None) or (used < max_groups):
                         if not row:
-                            cur.execute("INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s)", (group_id, user_id))
+                            cur.execute(
+                                "INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s)",
+                                (group_id, user_id)
+                            )
                             conn.commit()
 
                         cur.execute("""
@@ -1089,8 +1136,6 @@ def stripe_webhook():
             )
 
     return "OK", 200
-
-
 
 # ---------------- 启动服务 ----------------
 if __name__ == "__main__":
