@@ -677,15 +677,32 @@ def cancel():
 from psycopg2 import extensions
 
 def _ensure_tx_clean():
+    global conn, cur
     try:
+        # 检查数据库连接是否关闭，若关闭则重连
+        if conn.closed != 0:
+            logging.warning("[db] connection closed, reconnecting...")
+            DATABASE_URL = os.getenv("DATABASE_URL")
+            conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+            conn.autocommit = False
+            cur = conn.cursor()
+            logging.info("[db] reconnected successfully")
+
+        # 检查是否有事务错误
         if conn.get_transaction_status() == extensions.TRANSACTION_STATUS_INERROR:
             logging.warning("[tx] in error state, auto-rollback.")
             conn.rollback()
-    except Exception:
+    except Exception as e:
+        logging.error(f"[tx-check] {e}")
         try:
-            conn.rollback()
-        except Exception:
-            pass
+            DATABASE_URL = os.getenv("DATABASE_URL")
+            conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+            conn.autocommit = False
+            cur = conn.cursor()
+            logging.info("[db] reconnected after exception")
+        except Exception as e2:
+            logging.error(f"[db-reconnect-failed] {e2}")
+
 
 @app.route("/callback", methods=["POST"])
 def line_webhook():
