@@ -981,6 +981,7 @@ def line_webhook():
 
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
+    logging.info("✅ Webhook request received")  # <--- 确认请求进入服务器
     _ensure_tx_clean()
 
     endpoint_secret = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
@@ -1036,6 +1037,15 @@ def stripe_webhook():
     except Exception as e:
         logging.error(f"[wh] bad payload: {e}")
         return "Bad payload", 400
+
+    # ✅ 验签成功后打印事件类型
+    etype = event.get("type")
+    logging.info(f"[wh] event type={etype}")
+
+    # ✅ 在这里加入你原有的处理逻辑（例如 checkout.session.completed）
+
+    logging.info("✅ Webhook logic executed successfully")  # <--- 表示逻辑执行完毕
+    return '', 200  # <--- 一定要返回200给Stripe
 
     # ================= 业务处理（保留你的逻辑） =================
     etype = event.get("type")
