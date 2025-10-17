@@ -871,6 +871,8 @@ def line_webhook():
                     logging.error(f"[insert user_prefs] {e}")
                     conn.rollback()
 
+                logging.info(f"[lang set] user={user_id} group={group_id} lang={lang_code}")
+
                 # 群绑定套餐逻辑
                 try:
                     cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=%s", (user_id,))
@@ -889,7 +891,7 @@ def line_webhook():
 
                         if exists:
                             if exists[0] == user_id:
-                                msg = "该群已在你的套餐名下。"
+                                msg = "✅ This group is already linked to your active plan."
                             else:
                                 msg = "⚠️ 该群已绑定在其他账户下，无法重复绑定。"
                             send_reply_message(reply_token, [{"type": "text", "text": msg}])
