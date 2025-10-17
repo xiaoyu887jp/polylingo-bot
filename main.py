@@ -1026,6 +1026,53 @@ def line_webhook():
                 send_reply_message(reply_token, messages[:5])
 
     return "OK"
+
+# ===================== Group Binding Logic (通用群组绑定逻辑) =====================
+def bind_group_tx(user_id: str, group_id: str, plan_name: str, quota: int, expires_at):
+    """通用群绑定逻辑：用于 webhook 或 /bind 指令"""
+    try:
+        # 1️⃣ 检查群是否已被他人占用
+        cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
+        row = cur.fetchone()
+        if row and row[0] and row[0] != user_id:
+            return "bound_elsewhere"
+
+        # 2️⃣ 检查用户当前已绑定的群数
+        cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
+        used = cur.fetchone()[0] or 0
+        max_groups = PLANS[plan_name]["max_groups"]
+
+        # 超出上限
+        if (not row) and (max_groups is not None) and (used >= max_groups):
+            return "limit"
+
+        # 3️⃣ 建立绑定（如不存在）
+        if not row:
+            cur.execute("""
+                INSERT INTO group_bindings (group_id, owner_id)
+                VALUES (%s, %s) ON CONFLICT DO NOTHING
+            """, (group_id, user_id))
+            conn.commit()
+
+        # 4️⃣ 同步写入套餐到该群
+        cur.execute("""
+            INSERT INTO groups (group_id, plan_type, plan_owner, plan_remaining, expires_at)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (group_id) DO UPDATE
+            SET plan_type      = EXCLUDED.plan_type,
+                plan_owner     = EXCLUDED.plan_owner,
+                plan_remaining = EXCLUDED.plan_remaining,
+                expires_at     = EXCLUDED.expires_at
+        """, (group_id, plan_name, user_id, quota, expires_at))
+        conn.commit()
+
+        return "ok"
+
+    except Exception as e:
+        logging.error(f"[bind_group_tx] {e}")
+        conn.rollback()
+        return "error"
+
 # ===================== Stripe Webhook =====================
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
