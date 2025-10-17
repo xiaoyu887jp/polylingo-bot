@@ -825,7 +825,36 @@ def line_webhook():
                     logging.error(f"[unbind] {e}")
                     send_reply_message(reply_token, [{"type":"text","text":"❌ 解除綁定失敗，請稍後再試。"}])
                 continue
+            # B1.6) /bind 绑定新群
+            if text.strip().lower() == "/bind" and group_id:
+                try:
+                    # 读取用户当前的套餐信息
+                    cur.execute("SELECT plan_type, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
+                    row = cur.fetchone()
+                    if not row:
+                        send_reply_message(reply_token, [{"type": "text", "text": "⚠️ 你尚未购买套餐。"}])
+                        return "OK"
+                        
+                    plan_name, expires_at = row
+                    quota = PLANS[plan_name]["quota"]
 
+                    # 调用通用绑定函数
+                    status = bind_group_tx(user_id, group_id, plan_name, quota, expires_at)
+
+                    if status == "ok":
+                        send_reply_message(reply_token, [{"type": "text", "text": f"✅ 已绑定本群 {group_id}（{plan_name}）"}])
+                    elif status == "limit":
+                        send_reply_message(reply_token, [{"type": "text", "text": f"⚠️ 已达群组上限（{PLANS[plan_name]['max_groups']}）。请在旧群 /unbind 后再试。"}])
+                    elif status == "bound_elsewhere":
+                        send_reply_message(reply_token, [{"type": "text", "text": f"⚠️ 群 {group_id} 已被其他账号绑定。"}])
+                    else:
+                        send_reply_message(reply_token, [{"type": "text", "text": "⚠️ 绑定失败，请稍后再试。"}])
+                except Exception as e: 
+                    logging.error(f"[bind command] {e}")
+                    conn.rollback()
+                    send_reply_message(reply_token, [{"type": "text", "text": "⚠️ 系统异常，请稍后重试。"}])
+                return "OK"
+                     
             # B2) 语言按钮逻辑（点按卡片后的绑定）
             LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
             tnorm = text.strip().lower()
