@@ -32,6 +32,37 @@ stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 
 # ✅ Flask 实例（必须在日志配置之后）
 app = Flask(__name__)
+
+# ✅ 全局 LINE Session（指数退避 + keep-alive）
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import logging, threading
+
+LINE_PUSH_URL = "https://api.line.me/v2/bot/message/push"
+LINE_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+
+def get_line_session():
+    s = requests.Session()
+    retry = Retry(
+        total=4,
+        connect=4,
+        read=4,
+        backoff_factor=0.8,
+        status_forcelist=[408, 429, 500, 502, 503, 504],
+        allowed_methods=["POST"],
+        raise_on_status=False
+    )
+    adapter = HTTPAdapter(max_retries=retry, pool_maxsize=20, pool_block=True)
+    s.mount("https://", adapter)
+    s.headers.update({
+        "User-Agent": "polylingo-bot/1.0 (+python-requests)",
+        "Connection": "keep-alive",
+        "Authorization": f"Bearer {LINE_TOKEN}",
+        "Content-Type": "application/json"
+    })
+    return s
+
 # ---------------- Stripe ----------------
 # 从环境变量读取各 price_id，并建立 price_id -> 套餐名 的映射
 _PRICE_TO_PLAN_RAW = {
