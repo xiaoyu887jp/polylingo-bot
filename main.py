@@ -922,10 +922,10 @@ def line_webhook():
                     logging.error(f"[group binding] {e}")
                     conn.rollback()
 
-                cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
-                my_langs = [r[0] for r in cur.fetchall()] or [lang_code]
-                send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your languages: {', '.join(my_langs)}"}])
+                # 简单确认，只回本次选择的语言代码
+                send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your language: {lang_code}"}])
                 continue
+               
 
             # B3) 非群聊不翻译
             if not group_id:
