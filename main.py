@@ -849,6 +849,7 @@ def line_webhook():
                     logging.error(f"[unbind] {e}")
                     send_reply_message(reply_token, [{"type":"text","text":"❌ 解除綁定失敗，請稍後再試。"}])
                 continue
+
             # B1.6) /bind 绑定新群
             if text.strip().lower() == "/bind" and group_id:
                 try:
@@ -897,46 +898,29 @@ def line_webhook():
 
                 logging.info(f"[lang set] user={user_id} group={group_id} lang={lang_code}")
 
-                # 群绑定套餐逻辑
+                # 【静默绑定版】
                 try:
                     cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=%s", (user_id,))
                     row = cur.fetchone()
-                except Exception as e:
-                    logging.error(f"[check user_plans] {e}")
-                    row = None
-
-                if row:
-                    plan_type, max_groups = row
-                    try:
+                    if row:
+                        plan_type, max_groups = row
                         cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
                         used = cur.fetchone()[0] or 0
                         cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
                         exists = cur.fetchone()
 
-                        if exists:
-                            if exists[0] == user_id:
-                                msg = "✅ This group is already linked to your active plan."
-                            else:
-                                msg = "⚠️ 该群已绑定在其他账户下，无法重复绑定。"
-                            send_reply_message(reply_token, [{"type": "text", "text": msg}])
-                            continue
-
-                        if (max_groups is None) or (used < max_groups):
+                        if exists and exists[0] != user_id:
+                            send_reply_message(reply_token, [{
+                                "type": "text",
+                                "text": "⚠️ 该群已绑定在其他账户下，无法重复绑定。"
+                            }])
+                        elif (not exists) and ((max_groups is None) or (used < max_groups)):
                             cur.execute("INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s)", (group_id, user_id))
                             conn.commit()
-                            msg = "✅ 群绑定成功。"
-                        else:
-                            # ★ 已达上限：提示 + 购买链接
-                            buy_url = build_buy_link(user_id, group_id)
-                            msg = (
-                                f"⚠️ 你的套餐最多可綁定 {max_groups} 個群組。\n"
-                                f"請在舊群輸入 /unbind 解除綁定，或升級套餐：\n{buy_url}"
-                            )
-                        send_reply_message(reply_token, [{"type": "text", "text": msg}])
-                        continue
-                    except Exception as e:
-                        logging.error(f"[group binding] {e}")
-                        conn.rollback()
+                        # 其他情况（已绑定在自己名下 / 达上限）静默不提示
+                except Exception as e:
+                    logging.error(f"[group binding] {e}")
+                    conn.rollback()
 
                 cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
                 my_langs = [r[0] for r in cur.fetchall()] or [lang_code]
