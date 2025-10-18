@@ -789,9 +789,31 @@ def line_webhook():
             }])
             continue
 
-        # 新成员加入：只发卡，不清空全群
-        if etype == "memberJoined":
-            continue
+        # A) 机器人被拉入群：清理旧设定并发语言卡
+        if etype in ("memberJoined", "memberLeft"):
+            try:
+                # 1️⃣ 构建语言选择卡
+                flex = build_language_selection_flex()
+                send_reply_message(reply_token, [{
+                    "type": "flex",
+                    "altText": "[Translator Bot] Please select a language / 請選擇語言",
+                    "contents": flex
+             }])
+             # 2️⃣ 自动为当前群全员设置默认语言（LANG_CODES 全部）   
+             LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
+             for lang_code in LANG_CODES:
+                 cur.execute("""
+                     INSERT INTO user_prefs (user_id, group_id, target_lang)
+                     VALUES (%s, %s, %s)
+                     ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
+                 """, (user_id, group_id, lang_code))   
+              conn.commit()
+              logging.info(f"[auto-card] group={group_id} member_event={etype} langs=ALL")
+          except Exception as e:
+              logging.error(f"[auto-card] failed for group={group_id}: {e}")
+              conn.rollback()
+          continue
+            
 
         # B) 文本消息
         if etype == "message" and (event.get("message", {}) or {}).get("type") == "text":
