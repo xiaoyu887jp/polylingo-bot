@@ -748,7 +748,7 @@ def _ensure_tx_clean(force_reconnect=False):
 
 @app.route("/callback", methods=["POST"])
 def line_webhook():
-     _ensure_tx_clean(force_reconnect=True)   # ✅ 必须这样
+    _ensure_tx_clean(force_reconnect=True)   # ✅ 必须这样
 
     # 校验签名
     signature = request.headers.get("X-Line-Signature", "")
