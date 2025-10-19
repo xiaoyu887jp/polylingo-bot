@@ -234,6 +234,7 @@ try:
     cur.execute("UPDATE users SET free_remaining = 0 WHERE free_remaining IS NULL")
     conn.commit()
 except Exception as e:
+    # 简单确认，只回本次选择的语言代码   
     logging.warning(f"[schema post-fix] {e}")
     conn.rollback()
 
@@ -932,6 +933,7 @@ def line_webhook():
                     logging.error(f"[group binding] {e}")
                     conn.rollback()
                 except Exception as e:
+                    pass
                     
                 # 简单确认，只回本次选择的语言代码
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your language: {lang_code}"}])
