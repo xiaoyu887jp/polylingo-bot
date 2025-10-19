@@ -707,9 +707,19 @@ def cancel():
 # ---------------- LINE Webhook ----------------
 from psycopg2 import extensions
 
-def _ensure_tx_clean():
+def _ensure_tx_clean(force_reconnect=False):
     global conn, cur
     try:
+        if force_reconnect:
+            try:
+                DATABASE_URL = os.getenv("DATABASE_URL")
+                conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+                conn.autocommit = False
+                cur = conn.cursor()
+                logging.info("[db] force reconnected (per request)")
+            except Exception as e:
+                logging.error(f"[db-force-reconnect] {e}")
+
         # 检查数据库连接是否关闭，若关闭则重连
         if conn.closed != 0:
             logging.warning("[db] connection closed, reconnecting...")
@@ -723,6 +733,7 @@ def _ensure_tx_clean():
         if conn.get_transaction_status() == extensions.TRANSACTION_STATUS_INERROR:
             logging.warning("[tx] in error state, auto-rollback.")
             conn.rollback()
+
     except Exception as e:
         logging.error(f"[tx-check] {e}")
         try:
@@ -733,7 +744,6 @@ def _ensure_tx_clean():
             logging.info("[db] reconnected after exception")
         except Exception as e2:
             logging.error(f"[db-reconnect-failed] {e2}")
-
 
 @app.route("/callback", methods=["POST"])
 def line_webhook():
