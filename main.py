@@ -748,7 +748,7 @@ def _ensure_tx_clean(force_reconnect=False):
 
 @app.route("/callback", methods=["POST"])
 def line_webhook():
-    _ensure_tx_clean()   # ★ 每次请求进来先清理事务状态
+     _ensure_tx_clean(force_reconnect=True)   # ✅ 必须这样
 
     # 校验签名
     signature = request.headers.get("X-Line-Signature", "")
@@ -1129,7 +1129,7 @@ def bind_group_tx(user_id: str, group_id: str, plan_name: str, quota: int, expir
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
     logging.info("✅ Webhook request received")
-    _ensure_tx_clean()
+    _ensure_tx_clean(force_reconnect=True)   # ✅ 必须这样
 
     secret = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
     if not secret:
