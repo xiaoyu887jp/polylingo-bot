@@ -811,20 +811,22 @@ def line_webhook():
 
         # A) 机器人被拉入群：清理旧设定并发语言卡
         if etype == "join":
-            if group_id:
-                try:
-                    cur.execute("DELETE FROM user_prefs WHERE group_id=%s", (group_id,))
-                    conn.commit()
-                except Exception as e:
-                    logging.error(f"[join cleanup] {e}")
-                    conn.rollback()
-            flex = build_language_selection_flex()
-            send_reply_message(reply_token, [{
-                "type": "flex",
-                "altText": "[Translator Bot] Please select a language / 請選擇語言",
-                "contents": flex
-            }])
-            continue
+            if group_id and not has_sent_card(group_id):
+                flex = build_language_selection_flex()
+                send_reply_message(reply_token, [{
+                    "type": "flex",
+                    "altText": "[Translator Bot] Please select a language / 請選擇語言",
+                    "contents": flex
+                }])
+                mark_card_sent(group_id)
+                logging.info(f"[join] card sent to new group {group_id}"
+            else:        
+                logging.info(f"[join] group {group_id} already has card, skip sending")
+            }])    
+            continue 
+           
+          
+        
 
         # ==================== 成员变化时自动重新发语言卡 ====================
         if etype in ("memberJoined", "memberLeft"):
