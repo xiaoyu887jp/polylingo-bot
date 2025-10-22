@@ -257,10 +257,29 @@ def first_token(s: str) -> str:
     parts = t.split()
     return parts[0] if parts else ""
 
-
 def is_reset_command(s: str) -> bool:
     return first_token(s) in RESET_ALIASES
 
+# ✅ 检查群组是否已发送语言卡
+def has_sent_card(group_id):
+    try:
+        cur.execute("SELECT card_sent FROM group_settings WHERE group_id=%s", (group_id,))
+        row = cur.fetchone()
+        return bool(row and row[0])
+    except Exception:
+        return False
+
+# ✅ 标记群组为已发送语言卡
+def mark_card_sent(group_id):
+    try:
+        cur.execute("""
+            INSERT INTO group_settings (group_id, card_sent)
+            VALUES (%s, TRUE)
+            ON CONFLICT (group_id) DO UPDATE SET card_sent=TRUE
+        """, (group_id,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
 
 def send_reply_message(reply_token, messages):
     headers = {
@@ -276,7 +295,6 @@ def send_reply_message(reply_token, messages):
         )
     except Exception as e:
         logging.warning(f"[reply] failed: {e}")
-
 
 def send_push_text(to_id: str, text: str) -> int:
     headers = {
@@ -298,7 +316,7 @@ def send_push_text(to_id: str, text: str) -> int:
     except Exception as e:
         logging.error(f"[push] exception: {e}")
         return 0
-        
+
 def notify_group_limit(user_id, group_id, max_groups):
     try:
         send_push_text(
@@ -308,7 +326,6 @@ def notify_group_limit(user_id, group_id, max_groups):
         )
     except Exception as e:
         logging.error(f"[notify_group_limit] {e}")
-
 
 
 def is_friend(user_id: str):
