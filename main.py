@@ -226,6 +226,16 @@ CREATE TABLE IF NOT EXISTS translations_cache (
 )
 """)
 
+cur.execute("""
+CREATE TABLE IF NOT EXISTS translations_cache (
+    text TEXT,
+    source_lang TEXT,
+    target_lang TEXT,
+    translated TEXT,
+    PRIMARY KEY(text, source_lang, target_lang)
+)
+""")
+
 # 关键：建表后先提交一次，确保结构对后续查询可见
 conn.commit()
 
