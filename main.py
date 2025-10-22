@@ -226,18 +226,17 @@ CREATE TABLE IF NOT EXISTS translations_cache (
 )
 """)
 
+# ✅ 新增群组语言卡片表，用于“只发一次卡片”
 cur.execute("""
-CREATE TABLE IF NOT EXISTS translations_cache (
-    text TEXT,
-    source_lang TEXT,
-    target_lang TEXT,
-    translated TEXT,
-    PRIMARY KEY(text, source_lang, target_lang)
+CREATE TABLE IF NOT EXISTS group_settings (
+    group_id TEXT PRIMARY KEY,
+    card_sent BOOLEAN DEFAULT FALSE
 )
 """)
 
 # 关键：建表后先提交一次，确保结构对后续查询可见
 conn.commit()
+
 
 # （可选强化）把历史数据里 users.free_remaining 的 NULL 统一为 0，避免后续扣减遇到 None
 try:
