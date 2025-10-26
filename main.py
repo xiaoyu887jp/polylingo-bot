@@ -822,12 +822,8 @@ def line_webhook():
                 logging.info(f"[join] card sent to new group {group_id}"
             else:        
                 logging.info(f"[join] group {group_id} already has card, skip sending")
-            }])    
-            continue 
-           
-          
+            continue    
         
-
         # ==================== 成员变化时自动重新发语言卡 ====================
         if etype in ("memberJoined", "memberLeft"):
             try:
