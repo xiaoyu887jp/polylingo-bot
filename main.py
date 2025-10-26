@@ -675,7 +675,7 @@ def create_checkout_session():
     try:
         # ✅ 创建 Stripe Checkout Session
         session = stripe.checkout.Session.create(
-            mode="subscription",
+            mode="payment",
             line_items=[{"price": price_id, "quantity": 1}],
             success_url="https://saygo-translator.carrd.co#success",
             cancel_url="https://saygo-translator.carrd.co#cancel",
