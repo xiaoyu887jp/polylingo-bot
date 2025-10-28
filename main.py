@@ -170,82 +170,68 @@ RESET_ALIASES = {"/re", "/reset", "/resetlang"}
 # ===================== DB 初始化（沿用新程序结构） =====================
 import os, shutil, logging
 
-
-# ===================== 建表（PostgreSQL） =====================
-cur.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id TEXT PRIMARY KEY,
-    free_remaining INTEGER
-)
-""")
-
-cur.execute("""
-CREATE TABLE IF NOT EXISTS user_prefs (
-    user_id TEXT,
-    group_id TEXT,
-    target_lang TEXT,
-    PRIMARY KEY(user_id, group_id, target_lang)
-)
-""")
-
-cur.execute("""
-CREATE TABLE IF NOT EXISTS groups (
-    group_id TEXT PRIMARY KEY,
-    plan_type TEXT,
-    plan_owner TEXT,
-    plan_remaining INTEGER,
-    expires_at TEXT  -- 保持 TEXT（与你现有代码兼容）
-)
-""")
-
-cur.execute("""
-CREATE TABLE IF NOT EXISTS user_plans (
-    user_id TEXT PRIMARY KEY,
-    plan_type TEXT,
-    max_groups INTEGER,
-    subscription_id TEXT,
-    expires_at TEXT   -- 保持 TEXT（与你现有代码兼容）
-)
-""")
-
-cur.execute("""
-CREATE TABLE IF NOT EXISTS group_bindings (
-    group_id TEXT PRIMARY KEY,
-    owner_id TEXT,
-    bound_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)
-""")
-
-cur.execute("""
-CREATE TABLE IF NOT EXISTS translations_cache (
-    text TEXT,
-    source_lang TEXT,
-    target_lang TEXT,
-    translated TEXT,
-    PRIMARY KEY(text, source_lang, target_lang)
-)
-""")
-
-# ✅ 新增群组语言卡片表，用于“只发一次卡片”
-cur.execute("""
-CREATE TABLE IF NOT EXISTS group_settings (
-    group_id TEXT PRIMARY KEY,
-    card_sent BOOLEAN DEFAULT FALSE
-)
-""")
-
-# 关键：建表后先提交一次，确保结构对后续查询可见
-conn.commit()
-
-
-# （可选强化）把历史数据里 users.free_remaining 的 NULL 统一为 0，避免后续扣减遇到 None
-try:
-    cur.execute("UPDATE users SET free_remaining = 0 WHERE free_remaining IS NULL")
+# ===================== 初始化数据库结构 =====================
+def init_db():
+    tables = [
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY,
+            free_remaining INTEGER
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS user_prefs (
+            user_id TEXT,
+            group_id TEXT,
+            target_lang TEXT,
+            PRIMARY KEY(user_id, group_id, target_lang)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS groups (
+            group_id TEXT PRIMARY KEY,
+            plan_type TEXT,
+            plan_owner TEXT,
+            plan_remaining INTEGER,
+            expires_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS user_plans (
+            user_id TEXT PRIMARY KEY,
+            plan_type TEXT,
+            max_groups INTEGER,
+            subscription_id TEXT,
+            expires_at TEXT
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS group_bindings (
+            group_id TEXT PRIMARY KEY,
+            owner_id TEXT,
+            bound_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS translations_cache (
+            text TEXT,
+            source_lang TEXT,
+            target_lang TEXT,
+            translated TEXT,
+            PRIMARY KEY(text, source_lang, target_lang)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS group_settings (
+            group_id TEXT PRIMARY KEY,
+            card_sent BOOLEAN DEFAULT FALSE
+        )
+        """
+    ]
+    for sql in tables:
+        cur.execute(sql)
     conn.commit()
-except Exception as e:
-    # 简单确认，只回本次选择的语言代码   
-    logging.warning(f"[schema post-fix] {e}")
-    conn.rollback()
+    logging.info("[init_db] all tables ensured.")
 
 # ===================== 工具函数 =====================
 RESET_ALIASES = {"/re", "/reset", "/resetlang"}
