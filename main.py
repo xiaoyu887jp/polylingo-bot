@@ -1302,6 +1302,6 @@ def stripe_webhook():
 
 # ---------------- 启动服务 ----------------
 if __name__ == "__main__":
-    # 仅供本地调试使用；在 Render 会由 Gunicorn 加载，不会走这里
+    init_db()  # ✅ 首次执行时建表
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)), debug=False)
 
