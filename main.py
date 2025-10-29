@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+听到农工# -*- coding: utf-8 -*-
 import os
 import re
 import hmac
@@ -1139,7 +1139,8 @@ def bind_group_tx(user_id: str, group_id: str, plan_name: str, quota: int, expir
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
     logging.info("✅ Webhook request received")
-    _ensure_tx_clean(force_reconnect=True)   # ✅ 必须这样
+    _ensure_tx_clean(force_reconnect=True)   # ✅ 保证事务清洁
+    global conn, cur                         # ✅ 确保使用最新数据库连接
 
     secret = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
     if not secret:
@@ -1164,9 +1165,9 @@ def stripe_webhook():
     logging.info(
         "[wh-dbg] len=%s ct=%s cl=%s ua=%s t=%s v1(calc)=%s v1(head)=%s sec_tail=%s",
         len(pbytes),
-        request.headers.get("Content-Type",""),
-        request.headers.get("Content-Length",""),
-        request.headers.get("User-Agent",""),
+        request.headers.get("Content-Type", ""),
+        request.headers.get("Content-Length", ""),
+        request.headers.get("User-Agent", ""),
         t_val, calc_v1_prefix,
         ",".join([v[:16] for v in v1_list]) if v1_list else "none",
         secret[-6:]
@@ -1188,26 +1189,30 @@ def stripe_webhook():
     obj   = (event.get("data") or {}).get("object") or {}
     logging.info(f"[wh] event type={etype}")
 
-    # ===== 业务处理从这里开始，务必在 return 之前 =====
+    # ===== 业务处理从这里开始 =====
     if etype == "checkout.session.completed":
         session_id = obj.get("id")
         user_id    = obj.get("client_reference_id")
         md         = obj.get("metadata") or {}
         group_id   = (md.get("group_id") or "").strip()
+        if not group_id:
+            logging.warning("[wh] metadata missing group_id; will not auto-bind group")
 
-        # 解析 price_id
+        # ✅ 改进 line_items 解析安全性
         price_id = None
+        li_data = None
         try:
-            if obj.get("line_items") and obj["line_items"].get("data"):
-                price_id = obj["line_items"]["data"][0]["price"]["id"]
-            elif session_id:
+            if obj.get("line_items") and isinstance(obj["line_items"], dict):
+                li_data = obj["line_items"].get("data")
+            if not li_data and session_id:
                 li = stripe.checkout.Session.list_line_items(session_id, limit=1)
-                if li and li.get("data"):
-                    price_id = li["data"][0]["price"]["id"]
+                li_data = li.get("data") if li else None
+            if li_data and len(li_data) > 0:
+                price_id = li_data[0]["price"]["id"]
         except Exception as e:
             logging.error(f"[wh] fetch line_items failed: {e}")
 
-        # price_id → plan_name（从环境变量映射），不足时用 metadata['plan'] 兜底
+        # price_id → plan_name（从映射表或 metadata 兜底）
         plan_name = PRICE_TO_PLAN.get(price_id)
         if not plan_name:
             mp = (md.get("plan") or "").strip().capitalize()
@@ -1226,7 +1231,17 @@ def stripe_webhook():
         max_groups = PLANS[plan_name]["max_groups"]
         quota      = PLANS[plan_name]["quota"]
         import datetime
-        expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
+
+        # ✅ 改进：续费自动叠加
+        try:
+            cur.execute("SELECT expires_at FROM user_plans WHERE user_id=%s", (user_id,))
+            old = cur.fetchone()
+            if old and old[0] and old[0] > datetime.datetime.utcnow():
+                expires_at = old[0] + datetime.timedelta(days=30)
+            else:
+                expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
+        except Exception:
+            expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
 
         # 1) user_plans upsert
         try:
@@ -1244,8 +1259,8 @@ def stripe_webhook():
             conn.rollback()
             return "OK", 200
 
-        # 2) 绑定/充值
-        if group_id:
+        # 2) 群组绑定/授权逻辑
+        if group_id and group_id.strip():
             try:
                 cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
                 row = cur.fetchone()
@@ -1278,6 +1293,19 @@ def stripe_webhook():
                         """, (group_id, plan_name, user_id, quota, expires_at))
                         conn.commit()
 
+                        # ✅ 新增：更新授权状态
+                        try:
+                            cur.execute("""
+                                UPDATE group_settings
+                                SET authorized = TRUE, card_sent = FALSE
+                                WHERE group_id = %s
+                            """, (group_id,))
+                            conn.commit()
+                            logging.info(f"[wh] group {group_id} authorized set TRUE")
+                        except Exception as e:
+                            logging.error(f"[wh] failed to update authorized flag: {e}")
+                            conn.rollback()
+
                         send_push_text(
                             user_id,
                             f"✅ {plan_name} 套餐已啟用，群 {group_id} 獲得 {quota} 字，至 {expires_at} (UTC)。\n"
@@ -1295,7 +1323,7 @@ def stripe_webhook():
                 f"✅ {plan_name} plan activated. Add the bot to a group, then type /re."
             )
 
-    # 统一从这里返回 200
+    # ===== 统一返回 =====
     logging.info("✅ Webhook logic executed successfully")
     return "OK", 200
 
