@@ -1285,15 +1285,24 @@ def stripe_webhook():
 
                         # ✅ 修改 3：增加群组授权状态更新
                         try:
+                            # 先尝试更新
                             cur.execute("""
                                 UPDATE group_settings
                                 SET authorized = TRUE, card_sent = FALSE
                                 WHERE group_id = %s
                             """, (group_id,))
+                            if cur.rowcount == 0:
+                                # 如果没有更新任何行，说明这个群还没有记录 -> 插入
+                                cur.execute("""
+                                    INSERT INTO group_settings (group_id, authorized, card_sent)
+                                    VALUES (%s, TRUE, FALSE)
+                                    ON CONFLICT (group_id) DO UPDATE
+                                    SET authorized = TRUE, card_sent = FALSE
+                                """, (group_id,))
                             conn.commit()
-                            logging.info(f"[wh] group {group_id} authorized set TRUE")
+                            logging.info(f"[wh] group {group_id} authorized set TRUE (insert if missing)")
                         except Exception as e:
-                            logging.error(f"[wh] failed to update authorized flag: {e}")
+                            logging.error(f"[wh] failed to update/insert authorized flag: {e}")
                             conn.rollback()
 
                         send_push_text(
