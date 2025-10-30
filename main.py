@@ -19,6 +19,21 @@ from urllib3.util.retry import Retry
 from concurrent.futures import ThreadPoolExecutor
 from linebot import LineBotApi  # 仅为兼容保留，不直接使用
 
+# ===== Stripe Plan Definitions =====
+PRICE_TO_PLAN = {
+    "price_1QxABCstarter": "Starter",
+    "price_1QxABCbasic": "Basic",
+    "price_1QxABCpro": "Pro",
+    "price_1QxABCexpert": "Expert"
+}
+
+PLANS = {
+    "Starter": {"max_groups": 1, "quota": 300000},
+    "Basic":   {"max_groups": 3, "quota": 1000000},
+    "Pro":     {"max_groups": 5, "quota": 2000000},
+    "Expert":  {"max_groups": 10, "quota": 4000000},
+}
+
 
 # ✅ 日志配置（一定要在 Flask 实例创建前执行）
 logging.basicConfig(
@@ -666,8 +681,12 @@ def create_checkout_session():
             success_url="https://saygo-translator.carrd.co#success",
             cancel_url="https://saygo-translator.carrd.co#cancel",
             client_reference_id=user_id,
-            metadata={"plan": plan, "group_id": group_id or ""},
-            expand=["line_items"],  # ✅ webhook 可直接读取 line_items
+            metadata={
+                "line_user_id": user_id,         # ✅ 购买者 LINE user ID
+                "origin_group_id": group_id or "",  # ✅ 触发购买的群
+                "plan": plan                     # ✅ 购买的套餐名称
+            },
+            expand=["line_items"],  # ✅ webhook 可以直接取 line_items
         )
         return jsonify({"url": session.url})
     except Exception as e:
