@@ -1158,7 +1158,7 @@ def bind_group_tx(user_id: str, group_id: str, plan_name: str, quota: int, expir
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
     logging.info("✅ Webhook request received")
-    _ensure_tx_clean(force_reconnect=True)   # ✅ 必须这样
+    _ensure_tx_clean(force_reconnect=True)
 
     secret = (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip()
     if not secret:
@@ -1168,34 +1168,8 @@ def stripe_webhook():
     payload = request.get_data(as_text=True)
     sig_header = request.headers.get("Stripe-Signature", "") or ""
 
-    # 调试信息（可改回 info）
-    t_m = re.search(r"t=([^,]+)", sig_header)
-    t_val = t_m.group(1) if t_m else ""
-    v1_list = re.findall(r"v1=([0-9a-f]+)", sig_header)
     try:
-        signed = f"{t_val}.{payload}".encode("utf-8")
-        calc_v1 = hmac.new(secret.encode("utf-8"), signed, hashlib.sha256).hexdigest()
-        calc_v1_prefix = calc_v1[:16]
-    except Exception as e:
-        calc_v1_prefix = "NA"
-        logging.error(f"[wh-debug] hmac calc failed: {e}")
-    pbytes = payload.encode("utf-8")
-    logging.info(
-        "[wh-dbg] len=%s ct=%s cl=%s ua=%s t=%s v1(calc)=%s v1(head)=%s sec_tail=%s",
-        len(pbytes),
-        request.headers.get("Content-Type", ""),
-        request.headers.get("Content-Length", ""),
-        request.headers.get("User-Agent", ""),
-        t_val, calc_v1_prefix,
-        ",".join([v[:16] for v in v1_list]) if v1_list else "none",
-        secret[-6:]
-    )
-
-    # 验签
-    try:
-        event = stripe.Webhook.construct_event(
-            payload=payload, sig_header=sig_header, secret=secret
-        )
+        event = stripe.Webhook.construct_event(payload=payload, sig_header=sig_header, secret=secret)
     except stripe.error.SignatureVerificationError as e:
         logging.error(f"[wh] invalid signature: {e}")
         return "Invalid signature", 400
@@ -1207,43 +1181,27 @@ def stripe_webhook():
     obj   = (event.get("data") or {}).get("object") or {}
     logging.info(f"[wh] event type={etype}")
 
-    # ===== 业务处理从这里开始，务必在 return 之前 =====
     if etype == "checkout.session.completed":
         session_id = obj.get("id")
         user_id    = obj.get("client_reference_id")
         md         = obj.get("metadata") or {}
-
-        # ✅ 修改 1：更稳健地提取 group_id，防止空值报错
         group_id   = (md.get("group_id") or "").strip()
-        if not group_id:
-            logging.warning("[wh] metadata missing group_id; will not auto-bind group")
+        plan_name  = (md.get("plan") or "").strip().capitalize()
 
-        # 解析 price_id
+        # 兜底：price_id → plan_name
         price_id = None
         try:
-            if obj.get("line_items") and obj["line_items"].get("data"):
-                price_id = obj["line_items"]["data"][0]["price"]["id"]
-            elif session_id:
-                li = stripe.checkout.Session.list_line_items(session_id, limit=1)
-                if li and li.get("data"):
-                    price_id = li["data"][0]["price"]["id"]
+            li = stripe.checkout.Session.list_line_items(session_id, limit=1)
+            if li and li.get("data"):
+                price_id = li["data"][0]["price"]["id"]
         except Exception as e:
             logging.error(f"[wh] fetch line_items failed: {e}")
 
-        # price_id → plan_name（从环境变量映射），不足时用 metadata['plan'] 兜底
-        plan_name = PRICE_TO_PLAN.get(price_id)
         if not plan_name:
-            mp = (md.get("plan") or "").strip().capitalize()
-            if mp in PLANS:
-                plan_name = mp
+            plan_name = PRICE_TO_PLAN.get(price_id, "Basic")
 
-        logging.info(f"[wh] resolved plan={plan_name} price_id={price_id} user={user_id} group={group_id}")
-
-        if not user_id:
-            logging.warning("[wh] missing client_reference_id")
-            return "OK", 200
-        if not plan_name or plan_name not in PLANS:
-            logging.warning(f"[wh] plan not resolvable: {plan_name}")
+        if not user_id or not plan_name or plan_name not in PLANS:
+            logging.warning(f"[wh] invalid webhook payload user={user_id} plan={plan_name}")
             return "OK", 200
 
         max_groups = PLANS[plan_name]["max_groups"]
@@ -1251,7 +1209,7 @@ def stripe_webhook():
         import datetime
         expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
 
-        # 1) user_plans upsert
+        # 1️⃣ 更新 user_plans
         try:
             cur.execute("""
                 INSERT INTO user_plans (user_id, plan_type, max_groups, expires_at)
@@ -1263,88 +1221,68 @@ def stripe_webhook():
             """, (user_id, plan_name, max_groups, expires_at))
             conn.commit()
         except Exception as e:
-            logging.error(f"[wh] user_plans upsert: {e}")
+            logging.error(f"[wh] user_plans upsert failed: {e}")
             conn.rollback()
             return "OK", 200
 
-        # 2) 绑定/充值
-        # ✅ 修改 2：确保 group_id 存在才继续执行绑定逻辑
-        if group_id and group_id.strip():
+        # 2️⃣ 授权购买群
+        if group_id:
             try:
-                cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
-                row = cur.fetchone()
-
-                if row and row[0] and row[0] != user_id:
-                    send_push_text(user_id,
-                        f"⚠️ 群 {group_id} 已綁定到其他帳號，無法重複綁定。\n"
-                        f"⚠️ Group {group_id} is already bound to another account."
-                    )
-                else:
-                    cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
-                    used = cur.fetchone()[0] or 0
-
-                    if row or (max_groups is None) or (used < max_groups):
-                        if not row:
-                            cur.execute(
-                                "INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                                (group_id, user_id)
-                            )
-                            conn.commit()
-
-                        cur.execute("""
-                            INSERT INTO groups (group_id, plan_type, plan_owner, plan_remaining, expires_at)
-                            VALUES (%s, %s, %s, %s, %s)
-                            ON CONFLICT (group_id) DO UPDATE
-                            SET plan_type      = EXCLUDED.plan_type,
-                                plan_owner     = EXCLUDED.plan_owner,
-                                plan_remaining = EXCLUDED.plan_remaining,
-                                expires_at     = EXCLUDED.expires_at
-                        """, (group_id, plan_name, user_id, quota, expires_at))
-                        conn.commit()
-
-                        # ✅ 修改 3：增加群组授权状态更新
-                        try:
-                            # 先尝试更新
-                            cur.execute("""
-                                UPDATE group_settings
-                                SET authorized = TRUE, card_sent = FALSE
-                                WHERE group_id = %s
-                            """, (group_id,))
-                            if cur.rowcount == 0:
-                                # 如果没有更新任何行，说明这个群还没有记录 -> 插入
-                                cur.execute("""
-                                    INSERT INTO group_settings (group_id, authorized, card_sent)
-                                    VALUES (%s, TRUE, FALSE)
-                                    ON CONFLICT (group_id) DO UPDATE
-                                    SET authorized = TRUE, card_sent = FALSE
-                                """, (group_id,))
-                            conn.commit()
-                            logging.info(f"[wh] group {group_id} authorized set TRUE (insert if missing)")
-                        except Exception as e:
-                            logging.error(f"[wh] failed to update/insert authorized flag: {e}")
-                            conn.rollback()
-
-                        send_push_text(
-                            user_id,
-                            f"✅ {plan_name} 套餐已啟用，群 {group_id} 獲得 {quota} 字，至 {expires_at} (UTC)。\n"
-                            f"✅ {plan_name} activated. Group {group_id} has {quota} chars until {expires_at} (UTC)."
-                        )
-                    else:
-                        notify_group_limit(user_id, group_id, max_groups)
+                bind_group_tx(user_id, group_id, plan_name, quota, expires_at)
+                cur.execute("""
+                    INSERT INTO group_settings (group_id, authorized, card_sent)
+                    VALUES (%s, TRUE, FALSE)
+                    ON CONFLICT (group_id) DO UPDATE
+                    SET authorized = TRUE, card_sent = FALSE
+                """, (group_id,))
+                conn.commit()
+                logging.info(f"[wh] group {group_id} authorized set TRUE (insert if missing)")
             except Exception as e:
-                logging.error(f"[wh] group upsert: {e}")
+                logging.error(f"[wh] group upsert failed: {e}")
                 conn.rollback()
-        else:
-            send_push_text(
-                user_id,
-                f"✅ {plan_name} 套餐已啟用。把機器人加入群後，輸入 /re 設定語言。\n"
-                f"✅ {plan_name} plan activated. Add the bot to a group, then type /re."
-            )
 
-    # 统一从这里返回 200
+        # 3️⃣ ✅ 自动补齐剩余群组授权
+        try:
+            cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
+            used = cur.fetchone()[0] or 0
+            remaining = max_groups - used
+
+            if remaining > 0:
+                cur.execute("""
+                    SELECT group_id FROM group_candidates
+                    WHERE group_id NOT IN (
+                        SELECT group_id FROM group_bindings WHERE owner_id=%s
+                    )
+                    ORDER BY first_seen_at ASC
+                    LIMIT %s
+                """, (user_id, remaining))
+                candidates = [r[0] for r in cur.fetchall()]
+                for gid in candidates:
+                    try:
+                        bind_group_tx(user_id, gid, plan_name, quota, expires_at)
+                        cur.execute("""
+                            INSERT INTO group_settings (group_id, authorized, card_sent)
+                            VALUES (%s, TRUE, FALSE)
+                            ON CONFLICT (group_id) DO UPDATE
+                            SET authorized = TRUE, card_sent = FALSE
+                        """, (gid,))
+                        conn.commit()
+                        logging.info(f"[wh] auto-bound group {gid} for user {user_id}")
+                    except Exception as e:
+                        conn.rollback()
+                        logging.error(f"[wh] auto-bind failed for group {gid}: {e}")
+        except Exception as e:
+            logging.error(f"[wh] auto-bind logic failed: {e}")
+
+        # 4️⃣ 发送通知
+        send_push_text(
+            user_id,
+            f"✅ {plan_name} 套餐已啟用，最多可綁定 {max_groups} 個群組。\n"
+            f"目前已自動授權購買群及候選群，共 {used + remaining} 個群。"
+        )
+
     logging.info("✅ Webhook logic executed successfully")
     return "OK", 200
-
 
 
 # ---------------- 启动服务 ----------------
