@@ -160,22 +160,22 @@ PLANS = {
     'Starter': {
         'quota': 300000,
         'max_groups': 1,
-        'price_id': 'price_1RLjVTLhMUG5xYCsKu8Ozdc5'  # 入門方案
+        'price_id': 'price_1SMP7iLhMUG5xYCs8HGxpDMY'  # 入門方案
     },
     'Basic': {
         'quota': 1000000,
         'max_groups': 3,
-        'price_id': 'price_1RLkQyLhMUG5xYCscxtEhIun'  # 基礎方案
+        'price_id': 'price_1SMP9oLhMUG5xYCstJo6DBZA'  # 基礎方案
     },
     'Pro': {
         'quota': 2000000,
         'max_groups': 5,
-        'price_id': 'price_1RLkS0LhMUG5xYCsbFGEmKNM'  # 進階方案
+        'price_id': 'price_1SMPATLhMUG5xYCs3HPYy0ur'  # 進階方案
     },
     'Expert': {
         'quota': 4000000,
         'max_groups': 10,
-        'price_id': 'price_1RLkSlLhMUG5xYCsGhfHM6uB'  # 專業方案
+        'price_id': 'price_1SMPBILhMUG5xYCstKviBHIE'  # 專業方案
     }
 }
 
