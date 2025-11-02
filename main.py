@@ -1169,7 +1169,11 @@ def stripe_webhook():
     sig_header = request.headers.get("Stripe-Signature", "") or ""
 
     try:
-        event = stripe.Webhook.construct_event(payload=payload, sig_header=sig_header, secret=secret)
+        event = stripe.Webhook.construct_event(
+            payload=payload,
+            sig_header=sig_header,
+            secret=secret
+        )
     except stripe.error.SignatureVerificationError as e:
         logging.error(f"[wh] invalid signature: {e}")
         return "Invalid signature", 400
@@ -1188,7 +1192,7 @@ def stripe_webhook():
         group_id   = (md.get("group_id") or "").strip()
         plan_name  = (md.get("plan") or "").strip().capitalize()
 
-        # 兜底：price_id → plan_name
+        # 兜底：从 price_id 推断 plan_name
         price_id = None
         try:
             li = stripe.checkout.Session.list_line_items(session_id, limit=1)
@@ -1225,7 +1229,7 @@ def stripe_webhook():
             conn.rollback()
             return "OK", 200
 
-        # 2️⃣ 授权购买群
+        # 2️⃣ 仅授权购买所在群
         if group_id:
             try:
                 bind_group_tx(user_id, group_id, plan_name, quota, expires_at)
@@ -1236,49 +1240,19 @@ def stripe_webhook():
                     SET authorized = TRUE, card_sent = FALSE
                 """, (group_id,))
                 conn.commit()
-                logging.info(f"[wh] group {group_id} authorized set TRUE (insert if missing)")
+                logging.info(f"[wh] group {group_id} authorized set TRUE (purchased group only)")
             except Exception as e:
                 logging.error(f"[wh] group upsert failed: {e}")
                 conn.rollback()
 
-        # 3️⃣ ✅ 自动补齐剩余群组授权
-        try:
-            cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
-            used = cur.fetchone()[0] or 0
-            remaining = max_groups - used
+        # ✅ 不再执行自动补授权逻辑
+        # 让 Bot 在新群首次使用时自动授权（由前端事件逻辑处理）
 
-            if remaining > 0:
-                cur.execute("""
-                    SELECT group_id FROM group_candidates
-                    WHERE group_id NOT IN (
-                        SELECT group_id FROM group_bindings WHERE owner_id=%s
-                    )
-                    ORDER BY first_seen_at ASC
-                    LIMIT %s
-                """, (user_id, remaining))
-                candidates = [r[0] for r in cur.fetchall()]
-                for gid in candidates:
-                    try:
-                        bind_group_tx(user_id, gid, plan_name, quota, expires_at)
-                        cur.execute("""
-                            INSERT INTO group_settings (group_id, authorized, card_sent)
-                            VALUES (%s, TRUE, FALSE)
-                            ON CONFLICT (group_id) DO UPDATE
-                            SET authorized = TRUE, card_sent = FALSE
-                        """, (gid,))
-                        conn.commit()
-                        logging.info(f"[wh] auto-bound group {gid} for user {user_id}")
-                    except Exception as e:
-                        conn.rollback()
-                        logging.error(f"[wh] auto-bind failed for group {gid}: {e}")
-        except Exception as e:
-            logging.error(f"[wh] auto-bind logic failed: {e}")
-
-        # 4️⃣ 发送通知
+        # 3️⃣ 发送通知
         send_push_text(
             user_id,
             f"✅ {plan_name} 套餐已啟用，最多可綁定 {max_groups} 個群組。\n"
-            f"目前已自動授權購買群及候選群，共 {used + remaining} 個群。"
+            f"購買的群已立即啟用，其餘名額將在新群首次使用時自動生效。"
         )
 
     logging.info("✅ Webhook logic executed successfully")
