@@ -803,11 +803,11 @@ def line_webhook():
         if user_id:
             try:
                 cur.execute("""
-                INSERT INTO users (user_id, free_remaining)
-                VALUES (%s, %s)
-                ON CONFLICT (user_id) DO UPDATE
-                SET free_remaining = EXCLUDED.free_remaining
-                WHERE users.free_remaining IS NULL OR users.free_remaining = 0
+                    INSERT INTO users (user_id, free_remaining)
+                    VALUES (%s, %s)
+                    ON CONFLICT (user_id) DO UPDATE
+                    SET free_remaining = EXCLUDED.free_remaining
+                    WHERE users.free_remaining IS NULL OR users.free_remaining = 0
                 """, (user_id, PLANS['Free']['quota']))
                 conn.commit()
             except Exception as e:
@@ -816,18 +816,22 @@ def line_webhook():
 
         # A) 机器人被拉入群：清理旧设定并发语言卡
         if etype == "join":
-            if group_id and not has_sent_card(group_id):
-                flex = build_language_selection_flex()
-                send_reply_message(reply_token, [{
-                    "type": "flex",
-                    "altText": "[Translator Bot] Please select a language / 請選擇語言",
-                    "contents": flex
-                }])
-                mark_card_sent(group_id)
-                logging.info(f"[join] card sent to new group {group_id}")
-            else:        
-                logging.info(f"[join] group {group_id} already has card, skip sending")
-            continue    
+            try:
+                if group_id and not has_sent_card(group_id):
+                    flex = build_language_selection_flex()
+                    send_reply_message(reply_token, [{
+                        "type": "flex",
+                        "altText": "[Translator Bot] Please select a language / 請選擇語言",
+                        "contents": flex
+                    }])
+                    mark_card_sent(group_id)
+                    logging.info(f"[join] card sent to new group {group_id}")
+                else:
+                    logging.info(f"[join] group {group_id} already has card, skip sending")
+            except Exception as e:
+                logging.error(f"[join] failed for group={group_id}: {e}")
+                conn.rollback()
+            continue
 
         # ==================== 成员变化时：只在群未发过卡时发送一次 ====================
         if etype in ("memberJoined", "memberLeft"):
@@ -846,25 +850,28 @@ def line_webhook():
             except Exception as e:
                 logging.error(f"[auto-card] failed for group={group_id}: {e}")
                 conn.rollback()
-            continue    
+            continue
 
         # 2️⃣ 自动为当前群全员设置默认语言（LANG_CODES 全部）
-        LANG_CODES = {"en", "zh-cn", "zh-tw", "ja", "ko", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar"}
-        for lang_code in LANG_CODES:
-            cur.execute("""
-                INSERT INTO user_prefs (user_id, group_id, target_lang)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
-            """, (user_id, group_id, lang_code))
-        conn.commit()
+        LANG_CODES = {
+            "en", "zh-cn", "zh-tw", "ja", "ko", "th", "vi",
+            "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar"
+        }
 
-        logging.info(f"[auto-card] group={group_id} member_event={etype} langs=ALL")
-
-
-            except Exception as e:
-                logging.error(f"[auto-card] failed for group={group_id}: {e}")
-                conn.rollback()
+        try:
+            for lang_code in LANG_CODES:
+                cur.execute("""
+                    INSERT INTO user_prefs (user_id, group_id, target_lang)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
+                """, (user_id, group_id, lang_code))
+            conn.commit()
+            logging.info(f"[auto-card] group={group_id} member_event={etype} langs=ALL")
+        except Exception as e:
+            logging.error(f"[auto-card] failed for group={group_id}: {e}")
+            conn.rollback()
             continue
+
 
         # B) 文本消息
         if etype == "message" and (event.get("message", {}) or {}).get("type") == "text":
