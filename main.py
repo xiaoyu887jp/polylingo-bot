@@ -777,13 +777,13 @@ def _ensure_tx_clean(force_reconnect=False):
         except Exception as e2:
             logging.error(f"[db-reconnect-failed] {e2}")
 
+
 @app.route("/callback", methods=["POST"])
 def line_webhook():
     _ensure_tx_clean(force_reconnect=True)   # ✅ 必须这样
 
     # 校验签名
     signature = request.headers.get("X-Line-Signature", "")
-    # ✅ 用字符串读取原始请求体（最稳定）
     body = request.get_data(cache=False, as_text=True)
     if LINE_CHANNEL_SECRET:
         digest = hmac.new(LINE_CHANNEL_SECRET.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).digest()
@@ -828,29 +828,38 @@ def line_webhook():
             else:        
                 logging.info(f"[join] group {group_id} already has card, skip sending")
             continue    
-        
-        # ==================== 成员变化时自动重新发语言卡 ====================
+
+        # ==================== 成员变化时：只在群未发过卡时发送一次 ====================
         if etype in ("memberJoined", "memberLeft"):
             try:
-                # 1️⃣ 构建语言选择卡
-                flex = build_language_selection_flex()
-                send_reply_message(reply_token, [{
-                    "type": "flex",
-                    "altText": "[Translator Bot] Please select a language / 請選擇語言",
-                    "contents": flex
-                }])
+                if group_id and not has_sent_card(group_id):
+                    flex = build_language_selection_flex()
+                    send_reply_message(reply_token, [{
+                        "type": "flex",
+                        "altText": "[Translator Bot] Please select a language / 請選擇語言",
+                        "contents": flex
+                    }])
+                    mark_card_sent(group_id)
+                    logging.info(f"[auto-card] sent once to group {group_id} on member event {etype}")
+                else:
+                    logging.info(f"[auto-card] group {group_id} already has card, skip sending on {etype}")
+            except Exception as e:
+                logging.error(f"[auto-card] failed for group={group_id}: {e}")
+                conn.rollback()
+            continue    
 
-                # 2️⃣ 自动为当前群全员设置默认语言（LANG_CODES 全部）
-                LANG_CODES = {"en", "zh-cn", "zh-tw", "ja", "ko", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar"}
-                for lang_code in LANG_CODES:
-                    cur.execute("""
-                        INSERT INTO user_prefs (user_id, group_id, target_lang)
-                        VALUES (%s, %s, %s)
-                        ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
-                    """, (user_id, group_id, lang_code))
-                conn.commit()
+        # 2️⃣ 自动为当前群全员设置默认语言（LANG_CODES 全部）
+        LANG_CODES = {"en", "zh-cn", "zh-tw", "ja", "ko", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar"}
+        for lang_code in LANG_CODES:
+            cur.execute("""
+                INSERT INTO user_prefs (user_id, group_id, target_lang)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
+            """, (user_id, group_id, lang_code))
+        conn.commit()
 
-                logging.info(f"[auto-card] group={group_id} member_event={etype} langs=ALL")
+        logging.info(f"[auto-card] group={group_id} member_event={etype} langs=ALL")
+
 
             except Exception as e:
                 logging.error(f"[auto-card] failed for group={group_id}: {e}")
