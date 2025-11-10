@@ -782,15 +782,20 @@ def _ensure_tx_clean(force_reconnect=False):
 def line_webhook():
     _ensure_tx_clean(force_reconnect=True)   # ✅ 必须这样
 
-    # 校验签名
+    # 校验签名（验证来自 LINE 官方）
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(cache=False, as_text=True)
     if LINE_CHANNEL_SECRET:
-        digest = hmac.new(LINE_CHANNEL_SECRET.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).digest()
+        digest = hmac.new(
+            LINE_CHANNEL_SECRET.encode("utf-8"),
+            body.encode("utf-8"),
+            hashlib.sha256
+        ).digest()
         valid_signature = base64.b64encode(digest).decode("utf-8")
         if signature != valid_signature:
             abort(400)
 
+    # 解析 LINE Webhook 数据
     data = json.loads(body) if body else {}
     for event in data.get("events", []):
         etype = event.get("type")
@@ -799,7 +804,7 @@ def line_webhook():
         group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
 
-        # A0) 初始化免费额度（首次或为 0 时重置为 Free 的 quota）
+        # A0) 初始化免费额度（首次或额度为 0 时自动重置）
         if user_id:
             try:
                 cur.execute("""
@@ -814,7 +819,7 @@ def line_webhook():
                 logging.error(f"[init free quota] failed: {e}")
                 conn.rollback()
 
-        # A) 机器人被拉入群：清理旧设定并发语言卡
+        # A) 机器人被拉入群时，若未发过语言卡则自动发送
         if etype == "join":
             try:
                 if group_id and not has_sent_card(group_id):
@@ -852,9 +857,7 @@ def line_webhook():
                 conn.rollback()
             continue
 
-        # ✅ （修正版）
-        # 不再自动为所有用户设定16种语言，避免多语言翻译爆发
-        # 若希望默认设定英文，可启用以下逻辑
+        # ✅ 修正版：默认只设定英文，不再插入16种语言，彻底防止多语言翻译爆发
         try:
             cur.execute("""
                 INSERT INTO user_prefs (user_id, group_id, target_lang)
@@ -862,11 +865,11 @@ def line_webhook():
                 ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
             """, (user_id, group_id, "en"))
             conn.commit()
-            logging.info(f"[auto-card] group={group_id} default=en")
+            logging.info(f"[default-lang] group={group_id} user={user_id} -> en")
         except Exception as e:
-            logging.error(f"[auto-card] failed default=en for group={group_id}: {e}")
+            logging.error(f"[default-lang] failed for group={group_id}: {e}")
             conn.rollback()
-            
+
        # B) 文本消息
         if etype == "message" and (event.get("message", {}) or {}).get("type") == "text":
             text = (event.get("message", {}) or {}).get("text") or ""
