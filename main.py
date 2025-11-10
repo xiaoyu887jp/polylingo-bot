@@ -852,11 +852,9 @@ def line_webhook():
                 conn.rollback()
             continue
 
-        # ✅（修改重点）
-        # ❌ 删除原先的「自动为当前群全员设置默认语言（LANG_CODES 全部）」逻辑
-        # ✅ 不再自动为所有用户设定16种语言，避免多语言翻译爆发
-        # ✅ 如想设定默认语言，可改为以下可选逻辑（例如默认英文）：
-        """
+        # ✅ （修正版）
+        # 不再自动为所有用户设定16种语言，避免多语言翻译爆发
+        # 若希望默认设定英文，可启用以下逻辑
         try:
             cur.execute("""
                 INSERT INTO user_prefs (user_id, group_id, target_lang)
@@ -868,11 +866,8 @@ def line_webhook():
         except Exception as e:
             logging.error(f"[auto-card] failed default=en for group={group_id}: {e}")
             conn.rollback()
-        """
-
-    
-
-        # B) 文本消息
+            
+       # B) 文本消息
         if etype == "message" and (event.get("message", {}) or {}).get("type") == "text":
             text = (event.get("message", {}) or {}).get("text") or ""
 
