@@ -953,7 +953,7 @@ def line_webhook():
                     conn.rollback()
                     
                 # 回复确认信息 
-                send_reply_message(reply_token, [{"type": "text", "text": f"✅ 已设定语言：{lang_code}"}])
+                send_reply_message(reply_token, [{"type": "text", "text": f"✅ Language set to: {lang_code}"}])
                 continue
 
                 logging.info(f"[lang set] user={user_id} group={group_id} lang={lang_code}")
