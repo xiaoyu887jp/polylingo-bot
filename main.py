@@ -939,15 +939,22 @@ def line_webhook():
             if tnorm in LANG_CODES:
                 lang_code = tnorm
                 try:
+                    # 清除旧的语言设置，只保留当前语言
+                    cur.execute("DELETE FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
                     cur.execute("""
-                    INSERT INTO user_prefs (user_id, group_id, target_lang)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
+                        INSERT INTO user_prefs (user_id, group_id, target_lang)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
                     """, (user_id, group_id, lang_code))
                     conn.commit()
+                    logging.info(f"[lang set] user={user_id} group={group_id} -> {lang_code}")
                 except Exception as e:
                     logging.error(f"[insert user_prefs] {e}")
                     conn.rollback()
+                    
+                # 回复确认信息 
+                send_reply_message(reply_token, [{"type": "text", "text": f"✅ 已设定语言：{lang_code}"}])
+                continue
 
                 logging.info(f"[lang set] user={user_id} group={group_id} lang={lang_code}")
 
