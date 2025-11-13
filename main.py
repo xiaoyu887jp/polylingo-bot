@@ -831,12 +831,31 @@ def line_webhook():
                     }])
                     mark_card_sent(group_id)
                     logging.info(f"[join] card sent to new group {group_id}")
+
+                    # === AUTO-BIND-ON-JOIN ===
+                    # ✅ 若用户已购买套餐，则在加入群时自动绑定该群（不自动分配旧群）
+                    try:
+                        cur.execute(
+                            "SELECT plan_type, max_groups, expires_at FROM user_plans WHERE user_id=%s",
+                            (user_id,)
+                        )
+                        up = cur.fetchone()
+                        if up:
+                            plan_type, max_groups, expires_at = up
+                            quota = PLANS[plan_type]["quota"]
+                            bind_group_tx(user_id, group_id, plan_type, quota, expires_at)
+                            logging.info(f"[auto-bind-on-join] group={group_id} auto-bound for user={user_id}")
+                    except Exception as e:
+                        logging.error(f"[auto-bind-on-join] failed: {e}")
+                        conn.rollback()
+
                 else:
                     logging.info(f"[join] group {group_id} already has card, skip sending")
+
             except Exception as e:
                 logging.error(f"[join] failed for group={group_id}: {e}")
                 conn.rollback()
-            continue
+            continue  # join 事件处理完毕后跳过后续逻辑
 
         # ==================== 成员变化时：只在群未发过卡时发送一次 ====================
         if etype in ("memberJoined", "memberLeft"):
@@ -856,6 +875,7 @@ def line_webhook():
                 logging.error(f"[auto-card] failed for group={group_id}: {e}")
                 conn.rollback()
             continue
+
 
         # ✅ 修正版：默认只设定英文，不再插入16种语言，彻底防止多语言翻译爆发
         try:
