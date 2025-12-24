@@ -1221,82 +1221,84 @@ def stripe_webhook():
         logging.error(f"[wh] bad payload: {e}")
         return "Bad payload", 400
 
-    etype = event.get("type")
-    obj   = (event.get("data") or {}).get("object") or {}
-    logging.info(f"[wh] event type={etype}")
+    try:
+        etype = event.get("type")
+        obj   = (event.get("data") or {}).get("object") or {}
+        logging.info(f"[wh] event type={etype}")
 
-    if etype == "checkout.session.completed":
-        session_id = obj.get("id")
-        user_id    = obj.get("client_reference_id")
-        md         = obj.get("metadata") or {}
-        group_id   = (md.get("group_id") or "").strip()
-        plan_name  = (md.get("plan") or "").strip().capitalize()
+        if etype == "checkout.session.completed":
+            session_id = obj.get("id")
+            user_id    = obj.get("client_reference_id")
+            md         = obj.get("metadata") or {}
+            group_id   = (md.get("group_id") or "").strip()
+            plan_name  = (md.get("plan") or "").strip().capitalize()
 
-        # 兜底：从 price_id 推断 plan_name
-        price_id = None
-        try:
-            li = stripe.checkout.Session.list_line_items(session_id, limit=1)
-            if li and li.get("data"):
-                price_id = li["data"][0]["price"]["id"]
-        except Exception as e:
-            logging.error(f"[wh] fetch line_items failed: {e}")
-
-        if not plan_name:
-            plan_name = PRICE_TO_PLAN.get(price_id, "Basic")
-
-        if not user_id or not plan_name or plan_name not in PLANS:
-            logging.warning(f"[wh] invalid webhook payload user={user_id} plan={plan_name}")
-            return "OK", 200
-
-        max_groups = PLANS[plan_name]["max_groups"]
-        quota      = PLANS[plan_name]["quota"]
-        import datetime
-        expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
-
-        # 1️⃣ 更新 user_plans
-        try:
-            cur.execute("""
-                INSERT INTO user_plans (user_id, plan_type, max_groups, expires_at)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (user_id) DO UPDATE
-                SET plan_type = EXCLUDED.plan_type,
-                    max_groups = EXCLUDED.max_groups,
-                    expires_at = EXCLUDED.expires_at
-            """, (user_id, plan_name, max_groups, expires_at))
-            conn.commit()
-        except Exception as e:
-            logging.error(f"[wh] user_plans upsert failed: {e}")
-            conn.rollback()
-            return "OK", 200
-
-        # 2️⃣ 仅授权购买所在群
-        if group_id:
+            # 兜底：從 price_id 推斷 plan
+            price_id = None
             try:
-                bind_group_tx(user_id, group_id, plan_name, quota, expires_at)
-                cur.execute("""
-                    INSERT INTO group_settings (group_id, authorized, card_sent)
-                    VALUES (%s, TRUE, FALSE)
-                    ON CONFLICT (group_id) DO UPDATE
-                    SET authorized = TRUE, card_sent = FALSE
-                """, (group_id,))
-                conn.commit()
-                logging.info(f"[wh] group {group_id} authorized set TRUE (purchased group only)")
+                li = stripe.checkout.Session.list_line_items(session_id, limit=1)
+                if li and li.get("data"):
+                    price_id = li["data"][0]["price"]["id"]
             except Exception as e:
-                logging.error(f"[wh] group upsert failed: {e}")
+                logging.error(f"[wh] fetch line_items failed: {e}")
+
+            if not plan_name:
+                plan_name = PRICE_TO_PLAN.get(price_id, "Basic")
+
+            if not user_id or not plan_name or plan_name not in PLANS:
+                logging.warning(f"[wh] invalid webhook payload user={user_id} plan={plan_name}")
+                return "Invalid data", 400
+
+            max_groups = PLANS[plan_name]["max_groups"]
+            quota      = PLANS[plan_name]["quota"]
+            import datetime
+            expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
+
+            # ✅ 1. 更新 user_plans
+            try:
+                cur.execute("""
+                    INSERT INTO user_plans (user_id, plan_type, max_groups, expires_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (user_id) DO UPDATE
+                    SET plan_type = EXCLUDED.plan_type,
+                        max_groups = EXCLUDED.max_groups,
+                        expires_at = EXCLUDED.expires_at
+                """, (user_id, plan_name, max_groups, expires_at))
+                conn.commit()
+            except Exception as e:
+                logging.error(f"[wh] user_plans upsert failed: {e}")
                 conn.rollback()
+                return "DB error", 400
 
-        # ✅ 不再执行自动补授权逻辑
-        # 让 Bot 在新群首次使用时自动授权（由前端事件逻辑处理）
+            # ✅ 2. 綁定購買所在的群（如果有 group_id）
+            if group_id:
+                try:
+                    bind_group_tx(user_id, group_id, plan_name, quota, expires_at)
+                    cur.execute("""
+                        INSERT INTO group_settings (group_id, authorized, card_sent)
+                        VALUES (%s, TRUE, FALSE)
+                        ON CONFLICT (group_id) DO UPDATE
+                        SET authorized = TRUE, card_sent = FALSE
+                    """, (group_id,))
+                    conn.commit()
+                    logging.info(f"[wh] group {group_id} authorized")
+                except Exception as e:
+                    logging.error(f"[wh] group bind failed: {e}")
+                    conn.rollback()
 
-        # 3️⃣ 发送通知
-        send_push_text(
-            user_id,
-            f"✅ {plan_name} 套餐已啟用，最多可綁定 {max_groups} 個群組。\n"
-            f"購買的群已立即啟用，其餘名額將在新群首次使用時自動生效。"
-        )
+            # ✅ 3. 發送通知
+            send_push_text(
+                user_id,
+                f"✅ {plan_name} 套餐已啟用，最多可綁定 {max_groups} 個群組。\n"
+                f"購買的群已立即啟用，其餘名額將在新群首次使用時自動生效。"
+            )
 
-    logging.info("✅ Webhook logic executed successfully")
-    return "OK", 200
+        logging.info("✅ Webhook logic executed successfully")
+        return "OK", 200
+
+    except Exception as e:
+        logging.error(f"[wh] unexpected error: {e}")
+        return "Webhook internal error", 400
 
 
 # ---------------- 启动服务 ----------------
