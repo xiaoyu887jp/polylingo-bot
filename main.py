@@ -1173,6 +1173,23 @@ def line_webhook():
 
     return "OK"
 
+@app.route("/reset-bindings", methods=["GET"])
+def reset_bindings():
+    _ensure_tx_clean(force_reconnect=True)
+
+    user_id = request.args.get("user_id")
+    if not user_id:
+        return "❌ Missing user_id", 400
+
+    try:
+        cur.execute("DELETE FROM group_bindings WHERE owner_id=%s", (user_id,))
+        conn.commit()
+        return f"✅ 已重置 user_id={user_id} 的所有群綁定紀錄", 200
+    except Exception as e:
+        logging.error(f"[reset-bindings] failed: {e}")
+        conn.rollback()
+        return "❌ 發生錯誤，請查看日誌", 500
+
 # ===================== Group Binding Logic (通用群组绑定逻辑) =====================
 def bind_group_tx(user_id: str, group_id: str, plan_name: str, quota: int, expires_at):
     """通用群绑定逻辑：用于 webhook 或 /bind 指令"""
