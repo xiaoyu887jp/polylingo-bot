@@ -780,9 +780,9 @@ def _ensure_tx_clean(force_reconnect=False):
 
 @app.route("/callback", methods=["POST"])
 def line_webhook():
-    _ensure_tx_clean(force_reconnect=True)   # ✅ 必须这样
+    _ensure_tx_clean(force_reconnect=True)   # ✅ 必須這樣
 
-    # 校验签名（验证来自 LINE 官方）
+    # 校驗簽名（驗證來自 LINE 官方）
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(cache=False, as_text=True)
     if LINE_CHANNEL_SECRET:
@@ -795,7 +795,7 @@ def line_webhook():
         if signature != valid_signature:
             abort(400)
 
-    # 解析 LINE Webhook 数据
+    # 解析 LINE Webhook 資料
     data = json.loads(body) if body else {}
     for event in data.get("events", []):
         etype = event.get("type")
@@ -804,7 +804,7 @@ def line_webhook():
         group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
 
-        # A0) 初始化免费额度（首次或额度为 0 时自动重置）
+        # A0) 初始化免費額度（首次或額度為 0 時自動重置）
         if user_id:
             try:
                 cur.execute("""
@@ -819,7 +819,7 @@ def line_webhook():
                 logging.error(f"[init free quota] failed: {e}")
                 conn.rollback()
 
-        # A) 机器人被拉入群时，若未发过语言卡则自动发送
+        # A) 機器人被拉入群時，若未發過語言卡則自動發送
         if etype == "join":
             try:
                 if group_id and not has_sent_card(group_id):
@@ -833,7 +833,7 @@ def line_webhook():
                     logging.info(f"[join] card sent to new group {group_id}")
 
                     # === AUTO-BIND-ON-JOIN ===
-                    # ✅ 若用户已购买套餐，则在加入群时自动绑定该群（不自动分配旧群）
+                    # ✅ 若用戶已購買方案，則在加入群時自動綁定該群（不自動分配舊群）
                     try:
                         cur.execute(
                             "SELECT plan_type, max_groups, expires_at FROM user_plans WHERE user_id=%s",
@@ -855,9 +855,9 @@ def line_webhook():
             except Exception as e:
                 logging.error(f"[join] failed for group={group_id}: {e}")
                 conn.rollback()
-            continue  # join 事件处理完毕后跳过后续逻辑
+            continue  # join 事件處理完畢後跳過後續邏輯
 
-        # ==================== 成员变化时：只在群未发过卡时发送一次 ====================
+        # ==================== 成員變化時：只在群未發過卡時發送一次 ====================
         if etype in ("memberJoined", "memberLeft"):
             try:
                 if group_id and not has_sent_card(group_id):
@@ -876,21 +876,46 @@ def line_webhook():
                 conn.rollback()
             continue
 
-
-        # ✅ 修正版：默认只设定英文，不再插入16种语言，彻底防止多语言翻译爆发
+        # ✅ 修正版：預設只設定英文，不再插入 16 種語言，防止多語爆炸
         try:
-            cur.execute("""
-                INSERT INTO user_prefs (user_id, group_id, target_lang)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
-            """, (user_id, group_id, "en"))
-            conn.commit()
-            logging.info(f"[default-lang] group={group_id} user={user_id} -> en")
+            # 1) 檢查此群是否已有綁定
+            cur.execute("SELECT plan_type FROM groups WHERE group_id=%s", (group_id,))
+            exists = cur.fetchone()
+            if not exists:
+                # 2) 沒有授權：檢查用戶是否有方案
+                cur.execute("SELECT plan_type, max_groups, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
+                row = cur.fetchone()
+                if not row:
+                    # 無方案 → 不處理
+                    pass
+                else:
+                    plan_name, max_groups, expires_at = row
+                    quota = PLANS[plan_name]["quota"]
+
+                    # 3) 查出目前已綁定幾個群
+                    cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
+                    used = cur.fetchone()[0] or 0
+
+                    if used >= max_groups:
+                        # 超出名額 → 發提示
+                        buy_url = build_buy_link(user_id, group_id)
+                        msg = (
+                            f"⚠️ 你目前的 {plan_name} 方案已綁定 {used}/{max_groups} 群組。\n"
+                            f"如需在新群使用，請升級方案或在舊群使用 /unbind 釋放名額。\n{buy_url}"
+                        )
+                        send_reply_message(reply_token, [{"type": "text", "text": msg[:4900]}])
+                        continue  # 結束這次翻譯處理
+
+                    # 4) 還有名額 → 自動綁定
+                    bind_group_tx(user_id, group_id, plan_name, quota, expires_at)
+                    logging.info(f"[auto-bind-group] group={group_id} auto-bound for user={user_id}")
+
         except Exception as e:
-            logging.error(f"[default-lang] failed for group={group_id}: {e}")
+            logging.error(f"[auto-bind-group] failed: {e}")
             conn.rollback()
 
-       # B) 文本消息
+                
+        # B) 文本消息
         if etype == "message" and (event.get("message", {}) or {}).get("type") == "text":
             text = (event.get("message", {}) or {}).get("text") or ""
 
