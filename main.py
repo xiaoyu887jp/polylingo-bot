@@ -713,7 +713,7 @@ def buy_redirect():
 
     try:
         session = stripe.checkout.Session.create(
-            mode="subscription",
+            mode="payment", 
             payment_method_types=["card"],
             line_items=[{"price": price_id, "quantity": 1}],
             success_url="https://saygo-translator.carrd.co/#success",
