@@ -1,6 +1,5 @@
-# -*- coding: utf-8 -*-
-print("### MAIN.PY LOADED ###")
 
+# -*- coding: utf-8 -*-
 import os
 import re
 import hmac
@@ -49,10 +48,6 @@ stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 
 # ✅ Flask 实例（必须在日志配置之后）
 app = Flask(__name__)
-
-@app.route("/__routes")
-def __routes():
-    return "<br>".join(sorted(str(r) for r in app.url_map.iter_rules()))
 
 # ✅ 全局 LINE Session（指数退避 + keep-alive）
 import requests
@@ -634,6 +629,9 @@ def atomic_deduct_user_free_quota(user_id: str, amount: int):
         conn.rollback()
         return (False, 0)
 
+# ===================== Flask 应用 =====================
+app = Flask(__name__)   # ← 这一行要放最前面
+
 # ===== CORS：Carrd 页面跨域需要 =====
 @app.after_request
 def add_cors_headers(resp):
@@ -716,7 +714,7 @@ def buy_redirect():
 
     try:
         session = stripe.checkout.Session.create(
-            mode="payment", 
+            mode="subscription",
             payment_method_types=["card"],
             line_items=[{"price": price_id, "quantity": 1}],
             success_url="https://saygo-translator.carrd.co/#success",
@@ -783,9 +781,9 @@ def _ensure_tx_clean(force_reconnect=False):
 
 @app.route("/callback", methods=["POST"])
 def line_webhook():
-    _ensure_tx_clean(force_reconnect=True)   # ✅ 必須這樣
+    _ensure_tx_clean(force_reconnect=True)   # ✅ 必须这样
 
-    # 校驗簽名（驗證來自 LINE 官方）
+    # 校验签名（验证来自 LINE 官方）
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(cache=False, as_text=True)
     if LINE_CHANNEL_SECRET:
@@ -798,7 +796,7 @@ def line_webhook():
         if signature != valid_signature:
             abort(400)
 
-    # 解析 LINE Webhook 資料
+    # 解析 LINE Webhook 数据
     data = json.loads(body) if body else {}
     for event in data.get("events", []):
         etype = event.get("type")
@@ -807,7 +805,7 @@ def line_webhook():
         group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
 
-        # A0) 初始化免費額度（首次或額度為 0 時自動重置）
+        # A0) 初始化免费额度（首次或额度为 0 时自动重置）
         if user_id:
             try:
                 cur.execute("""
@@ -822,7 +820,7 @@ def line_webhook():
                 logging.error(f"[init free quota] failed: {e}")
                 conn.rollback()
 
-        # A) 機器人被拉入群時，若未發過語言卡則自動發送
+        # A) 机器人被拉入群时，若未发过语言卡则自动发送
         if etype == "join":
             try:
                 if group_id and not has_sent_card(group_id):
@@ -834,33 +832,14 @@ def line_webhook():
                     }])
                     mark_card_sent(group_id)
                     logging.info(f"[join] card sent to new group {group_id}")
-
-                    # === AUTO-BIND-ON-JOIN ===
-                    # ✅ 若用戶已購買方案，則在加入群時自動綁定該群（不自動分配舊群）
-                    try:
-                        cur.execute(
-                            "SELECT plan_type, max_groups, expires_at FROM user_plans WHERE user_id=%s",
-                            (user_id,)
-                        )
-                        up = cur.fetchone()
-                        if up:
-                            plan_type, max_groups, expires_at = up
-                            quota = PLANS[plan_type]["quota"]
-                            bind_group_tx(user_id, group_id, plan_type, quota, expires_at)
-                            logging.info(f"[auto-bind-on-join] group={group_id} auto-bound for user={user_id}")
-                    except Exception as e:
-                        logging.error(f"[auto-bind-on-join] failed: {e}")
-                        conn.rollback()
-
                 else:
                     logging.info(f"[join] group {group_id} already has card, skip sending")
-
             except Exception as e:
                 logging.error(f"[join] failed for group={group_id}: {e}")
                 conn.rollback()
-            continue  # join 事件處理完畢後跳過後續邏輯
+            continue
 
-        # ==================== 成員變化時：只在群未發過卡時發送一次 ====================
+        # ==================== 成员变化时：只在群未发过卡时发送一次 ====================
         if etype in ("memberJoined", "memberLeft"):
             try:
                 if group_id and not has_sent_card(group_id):
@@ -879,46 +858,20 @@ def line_webhook():
                 conn.rollback()
             continue
 
-        # ✅ 修正版：預設只設定英文，不再插入 16 種語言，防止多語爆炸
+        # ✅ 修正版：默认只设定英文，不再插入16种语言，彻底防止多语言翻译爆发
         try:
-            # 1) 檢查此群是否已有綁定
-            cur.execute("SELECT plan_type FROM groups WHERE group_id=%s", (group_id,))
-            exists = cur.fetchone()
-            if not exists:
-                # 2) 沒有授權：檢查用戶是否有方案
-                cur.execute("SELECT plan_type, max_groups, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
-                row = cur.fetchone()
-                if not row:
-                    # 無方案 → 不處理
-                    pass
-                else:
-                    plan_name, max_groups, expires_at = row
-                    quota = PLANS[plan_name]["quota"]
-
-                    # 3) 查出目前已綁定幾個群
-                    cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
-                    used = cur.fetchone()[0] or 0
-
-                    if used >= max_groups:
-                        # 超出名額 → 發提示
-                        buy_url = build_buy_link(user_id, group_id)
-                        msg = (
-                            f"⚠️ 你目前的 {plan_name} 方案已綁定 {used}/{max_groups} 群組。\n"
-                            f"如需在新群使用，請升級方案或在舊群使用 /unbind 釋放名額。\n{buy_url}"
-                        )
-                        send_reply_message(reply_token, [{"type": "text", "text": msg[:4900]}])
-                        continue  # 結束這次翻譯處理
-
-                    # 4) 還有名額 → 自動綁定
-                    bind_group_tx(user_id, group_id, plan_name, quota, expires_at)
-                    logging.info(f"[auto-bind-group] group={group_id} auto-bound for user={user_id}")
-
+            cur.execute("""
+                INSERT INTO user_prefs (user_id, group_id, target_lang)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
+            """, (user_id, group_id, "en"))
+            conn.commit()
+            logging.info(f"[default-lang] group={group_id} user={user_id} -> en")
         except Exception as e:
-            logging.error(f"[auto-bind-group] failed: {e}")
+            logging.error(f"[default-lang] failed for group={group_id}: {e}")
             conn.rollback()
 
-                
-        # B) 文本消息
+       # B) 文本消息
         if etype == "message" and (event.get("message", {}) or {}).get("type") == "text":
             text = (event.get("message", {}) or {}).get("text") or ""
 
@@ -987,22 +940,15 @@ def line_webhook():
             if tnorm in LANG_CODES:
                 lang_code = tnorm
                 try:
-                    # 清除旧的语言设置，只保留当前语言
-                    cur.execute("DELETE FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
                     cur.execute("""
-                        INSERT INTO user_prefs (user_id, group_id, target_lang)
-                        VALUES (%s, %s, %s)
-                        ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
+                    INSERT INTO user_prefs (user_id, group_id, target_lang)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
                     """, (user_id, group_id, lang_code))
                     conn.commit()
-                    logging.info(f"[lang set] user={user_id} group={group_id} -> {lang_code}")
                 except Exception as e:
                     logging.error(f"[insert user_prefs] {e}")
                     conn.rollback()
-                    
-                # 回复确认信息 
-                send_reply_message(reply_token, [{"type": "text", "text": f"✅ Language set to: {lang_code}"}])
-                continue
 
                 logging.info(f"[lang set] user={user_id} group={group_id} lang={lang_code}")
 
@@ -1176,23 +1122,6 @@ def line_webhook():
 
     return "OK"
 
-@app.route("/reset-bindings", methods=["GET"])
-def reset_bindings():
-    _ensure_tx_clean(force_reconnect=True)
-
-    user_id = request.args.get("user_id")
-    if not user_id:
-        return "❌ Missing user_id", 400
-
-    try:
-        cur.execute("DELETE FROM group_bindings WHERE owner_id=%s", (user_id,))
-        conn.commit()
-        return f"✅ 已重置 user_id={user_id} 的所有群綁定紀錄", 200
-    except Exception as e:
-        logging.error(f"[reset-bindings] failed: {e}")
-        conn.rollback()
-        return "❌ 發生錯誤，請查看日誌", 500
-
 # ===================== Group Binding Logic (通用群组绑定逻辑) =====================
 def bind_group_tx(user_id: str, group_id: str, plan_name: str, quota: int, expires_at):
     """通用群绑定逻辑：用于 webhook 或 /bind 指令"""
@@ -1266,88 +1195,85 @@ def stripe_webhook():
         logging.error(f"[wh] bad payload: {e}")
         return "Bad payload", 400
 
-    try:
-        etype = event.get("type")
-        obj   = (event.get("data") or {}).get("object") or {}
-        logging.info(f"[wh] event type={etype}")
+    etype = event.get("type")
+    obj   = (event.get("data") or {}).get("object") or {}
+    logging.info(f"[wh] event type={etype}")
 
-        if etype == "checkout.session.completed":
-            session_id = obj.get("id")
-            user_id    = obj.get("client_reference_id")
-            md         = obj.get("metadata") or {}
-            group_id   = (md.get("group_id") or "").strip()
-            plan_name  = (md.get("plan") or "").strip().capitalize()
+    if etype == "checkout.session.completed":
+        session_id = obj.get("id")
+        user_id    = obj.get("client_reference_id")
+        md         = obj.get("metadata") or {}
+        group_id   = (md.get("group_id") or "").strip()
+        plan_name  = (md.get("plan") or "").strip().capitalize()
 
-            # 兜底：從 price_id 推斷 plan
-            price_id = None
+        # 兜底：从 price_id 推断 plan_name
+        price_id = None
+        try:
+            li = stripe.checkout.Session.list_line_items(session_id, limit=1)
+            if li and li.get("data"):
+                price_id = li["data"][0]["price"]["id"]
+        except Exception as e:
+            logging.error(f"[wh] fetch line_items failed: {e}")
+
+        if not plan_name:
+            plan_name = PRICE_TO_PLAN.get(price_id, "Basic")
+
+        if not user_id or not plan_name or plan_name not in PLANS:
+            logging.warning(f"[wh] invalid webhook payload user={user_id} plan={plan_name}")
+            return "OK", 200
+
+        max_groups = PLANS[plan_name]["max_groups"]
+        quota      = PLANS[plan_name]["quota"]
+        import datetime
+        expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
+
+        # 1️⃣ 更新 user_plans
+        try:
+            cur.execute("""
+                INSERT INTO user_plans (user_id, plan_type, max_groups, expires_at)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE
+                SET plan_type = EXCLUDED.plan_type,
+                    max_groups = EXCLUDED.max_groups,
+                    expires_at = EXCLUDED.expires_at
+            """, (user_id, plan_name, max_groups, expires_at))
+            conn.commit()
+        except Exception as e:
+            logging.error(f"[wh] user_plans upsert failed: {e}")
+            conn.rollback()
+            return "OK", 200
+
+        # 2️⃣ 仅授权购买所在群
+        if group_id:
             try:
-                li = stripe.checkout.Session.list_line_items(session_id, limit=1)
-                if li and li.get("data"):
-                    price_id = li["data"][0]["price"]["id"]
-            except Exception as e:
-                logging.error(f"[wh] fetch line_items failed: {e}")
-
-            if not plan_name:
-                plan_name = PRICE_TO_PLAN.get(price_id, "Basic")
-
-            if not user_id or not plan_name or plan_name not in PLANS:
-                logging.warning(f"[wh] invalid webhook payload user={user_id} plan={plan_name}")
-                return "Invalid data", 400
-
-            max_groups = PLANS[plan_name]["max_groups"]
-            quota      = PLANS[plan_name]["quota"]
-            import datetime
-            expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=30)
-
-            # ✅ 1. 更新 user_plans
-            try:
+                bind_group_tx(user_id, group_id, plan_name, quota, expires_at)
                 cur.execute("""
-                    INSERT INTO user_plans (user_id, plan_type, max_groups, expires_at)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (user_id) DO UPDATE
-                    SET plan_type = EXCLUDED.plan_type,
-                        max_groups = EXCLUDED.max_groups,
-                        expires_at = EXCLUDED.expires_at
-                """, (user_id, plan_name, max_groups, expires_at))
+                    INSERT INTO group_settings (group_id, authorized, card_sent)
+                    VALUES (%s, TRUE, FALSE)
+                    ON CONFLICT (group_id) DO UPDATE
+                    SET authorized = TRUE, card_sent = FALSE
+                """, (group_id,))
                 conn.commit()
+                logging.info(f"[wh] group {group_id} authorized set TRUE (purchased group only)")
             except Exception as e:
-                logging.error(f"[wh] user_plans upsert failed: {e}")
+                logging.error(f"[wh] group upsert failed: {e}")
                 conn.rollback()
-                return "DB error", 400
 
-            # ✅ 2. 綁定購買所在的群（如果有 group_id）
-            if group_id:
-                try:
-                    bind_group_tx(user_id, group_id, plan_name, quota, expires_at)
-                    cur.execute("""
-                        INSERT INTO group_settings (group_id, authorized, card_sent)
-                        VALUES (%s, TRUE, FALSE)
-                        ON CONFLICT (group_id) DO UPDATE
-                        SET authorized = TRUE, card_sent = FALSE
-                    """, (group_id,))
-                    conn.commit()
-                    logging.info(f"[wh] group {group_id} authorized")
-                except Exception as e:
-                    logging.error(f"[wh] group bind failed: {e}")
-                    conn.rollback()
+        # ✅ 不再执行自动补授权逻辑
+        # 让 Bot 在新群首次使用时自动授权（由前端事件逻辑处理）
 
-            # ✅ 3. 發送通知
-            send_push_text(
-                user_id,
-                f"✅ {plan_name} 套餐已啟用，最多可綁定 {max_groups} 個群組。\n"
-                f"購買的群已立即啟用，其餘名額將在新群首次使用時自動生效。"
-            )
+        # 3️⃣ 发送通知
+        send_push_text(
+            user_id,
+            f"✅ {plan_name} 套餐已啟用，最多可綁定 {max_groups} 個群組。\n"
+            f"購買的群已立即啟用，其餘名額將在新群首次使用時自動生效。"
+        )
 
-        logging.info("✅ Webhook logic executed successfully")
-        return "OK", 200
-
-    except Exception as e:
-        logging.error(f"[wh] unexpected error: {e}")
-        return "Webhook internal error", 400
+    logging.info("✅ Webhook logic executed successfully")
+    return "OK", 200
 
 
 # ---------------- 启动服务 ----------------
 if __name__ == "__main__":
     init_db()  # ✅ 首次执行时建表
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)), debug=False)
-
