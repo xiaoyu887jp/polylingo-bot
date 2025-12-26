@@ -628,9 +628,6 @@ def atomic_deduct_user_free_quota(user_id: str, amount: int):
         conn.rollback()
         return (False, 0)
 
-# ===================== Flask 应用 =====================
-app = Flask(__name__)   # ← 这一行要放最前面
-
 # ===== CORS：Carrd 页面跨域需要 =====
 @app.after_request
 def add_cors_headers(resp):
