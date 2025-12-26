@@ -1298,6 +1298,23 @@ def stripe_webhook():
     logging.info("✅ Webhook logic executed successfully")
     return "OK", 200
 
+@app.route("/__clear_all_data", methods=["GET"])
+def clear_all_data():
+    _ensure_tx_clean(force_reconnect=True)
+    try:
+        cur.execute("DELETE FROM group_bindings")
+        cur.execute("DELETE FROM groups")
+        cur.execute("DELETE FROM user_plans")
+        cur.execute("DELETE FROM users")
+        cur.execute("DELETE FROM user_prefs")
+        conn.commit()
+        return "✅ 所有用户相关数据已清除", 200
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"[clear_all_data] failed: {e}")
+        return f"❌ 清除失败: {e}", 500
+
+
 
 # ---------------- 启动服务 ----------------
 if __name__ == "__main__":
