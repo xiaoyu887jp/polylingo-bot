@@ -50,6 +50,10 @@ stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 # ✅ Flask 实例（必须在日志配置之后）
 app = Flask(__name__)
 
+@app.route("/__routes")
+def __routes():
+    return "<br>".join(sorted(str(r) for r in app.url_map.iter_rules()))
+
 # ✅ 全局 LINE Session（指数退避 + keep-alive）
 import requests
 from requests.adapters import HTTPAdapter
