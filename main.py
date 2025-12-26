@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+print("### MAIN.PY LOADED ###")
+
 import os
 import re
 import hmac
