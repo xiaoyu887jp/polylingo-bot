@@ -630,6 +630,21 @@ def atomic_deduct_user_free_quota(user_id: str, amount: int):
 
 # ===================== Flask 应用 =====================
 app = Flask(__name__)   # ← 这一行要放最前面
+# ===================== 临时 Admin 全量重置接口（测试用） =====================
+@app.route("/__clear_all_data", methods=["GET"])
+def clear_all_data():
+    _ensure_tx_clean(force_reconnect=True)
+    try:
+        cur.execute("DELETE FROM group_bindings")
+        cur.execute("DELETE FROM groups")
+        cur.execute("DELETE FROM user_plans")
+        cur.execute("DELETE FROM users")
+        cur.execute("DELETE FROM user_prefs")
+        conn.commit()
+        return "✅ 所有用户相关数据已清除", 200
+    except Exception as e:
+        conn.rollback()
+        return f"❌ 清除失败: {e}", 500
 
 # ===== CORS：Carrd 页面跨域需要 =====
 @app.after_request
@@ -1298,22 +1313,6 @@ def stripe_webhook():
     logging.info("✅ Webhook logic executed successfully")
     return "OK", 200
 
-
-# ===================== 临时 Admin 全量重置接口（测试用） =====================
-@app.route("/__clear_all_data", methods=["GET"])
-def clear_all_data():
-    _ensure_tx_clean(force_reconnect=True)
-    try:
-        cur.execute("DELETE FROM group_bindings")
-        cur.execute("DELETE FROM groups")
-        cur.execute("DELETE FROM user_plans")
-        cur.execute("DELETE FROM users")
-        cur.execute("DELETE FROM user_prefs")
-        conn.commit()
-        return "✅ 所有用户相关数据已清除", 200
-    except Exception as e:
-        conn.rollback()
-        return f"❌ 清除失败: {e}", 500
 
 
 # ---------------- 启动服务 ----------------
