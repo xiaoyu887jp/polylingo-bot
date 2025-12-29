@@ -87,13 +87,13 @@ _PRICE_TO_PLAN_RAW = {
 
 # 过滤掉可能为空的键，避免 None 或 "" 干扰匹配
 PRICE_TO_PLAN = {k: v for k, v in _PRICE_TO_PLAN_RAW.items() if k}
-
 # ===================== DB 连接 =====================
 DATABASE_URL = os.getenv("DATABASE_URL")
 conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-conn.autocommit = False 
+conn.autocommit = False   # ❗ 必须 False，才能手动 BEGIN/COMMIT
 cur = conn.cursor()
-
+conn = None
+cur = None
 
 # ===================== HTTP 会话池 =====================
 HTTP = requests.Session()
@@ -630,17 +630,9 @@ def atomic_deduct_user_free_quota(user_id: str, amount: int):
 
 # ===================== Flask 应用 =====================
 app = Flask(__name__)   # ← 这一行要放最前面
-@app.route("/reset-everything-999")
-def reset_db_data():
-    try:
-        # 这几行代码会把数据库里的所有绑定和额度记录彻底删掉
-        cur.execute("TRUNCATE TABLE group_bindings, user_plans, groups, user_prefs, users CASCADE;")
-        conn.commit()
-        return "✅ 所有旧数据已清零！现在你可以把机器人当成全新的来使用了。", 200
-    except Exception as e:
-        conn.rollback()
-        return f"❌ 重置失败: {str(e)}", 500
-
+@app.route("/", methods=["GET"])
+def health_check():
+    return "OK - polylingo bot is running", 200
 # ===== CORS：Carrd 页面跨域需要 =====
 @app.after_request
 def add_cors_headers(resp):
@@ -790,11 +782,11 @@ def _ensure_tx_clean(force_reconnect=False):
 
 @app.route("/callback", methods=["POST"])
 def line_webhook():
-    _ensure_tx_clean(force_reconnect=True)
+    _ensure_tx_clean(force_reconnect=True)   # ✅ 必须这样
 
+    # 校验签名（验证来自 LINE 官方）
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(cache=False, as_text=True)
-
     if LINE_CHANNEL_SECRET:
         digest = hmac.new(
             LINE_CHANNEL_SECRET.encode("utf-8"),
@@ -805,17 +797,16 @@ def line_webhook():
         if signature != valid_signature:
             abort(400)
 
+    # 解析 LINE Webhook 数据
     data = json.loads(body) if body else {}
-    events = data.get("events", [])
-
-    for event in events:
+    for event in data.get("events", []):
         etype = event.get("type")
         source = event.get("source", {}) or {}
         user_id = source.get("userId")
         group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
 
-        # 额度初始化
+        # A0) 初始化免费额度（首次或额度为 0 时自动重置）
         if user_id:
             try:
                 cur.execute("""
@@ -826,74 +817,47 @@ def line_webhook():
                     WHERE users.free_remaining IS NULL OR users.free_remaining = 0
                 """, (user_id, PLANS['Free']['quota']))
                 conn.commit()
-            except:
+            except Exception as e:
+                logging.error(f"[init free quota] failed: {e}")
                 conn.rollback()
 
-        # 进群卡片
+        # A) 机器人被拉入群时，若未发过语言卡则自动发送
         if etype == "join":
             try:
                 if group_id and not has_sent_card(group_id):
                     flex = build_language_selection_flex()
                     send_reply_message(reply_token, [{
                         "type": "flex",
-                        "altText": "Please select language",
+                        "altText": "[Translator Bot] Please select a language / 請選擇語言",
                         "contents": flex
                     }])
                     mark_card_sent(group_id)
-            except:
+                    logging.info(f"[join] card sent to new group {group_id}")
+
+                    # === AUTO-BIND-ON-JOIN ===
+                    # ✅ 若用户已购买套餐，则在加入群时自动绑定该群（不自动分配旧群）
+                    try:
+                        cur.execute(
+                            "SELECT plan_type, max_groups, expires_at FROM user_plans WHERE user_id=%s",
+                            (user_id,)
+                        )
+                        up = cur.fetchone()
+                        if up:
+                            plan_type, max_groups, expires_at = up
+                            quota = PLANS[plan_type]["quota"]
+                            bind_group_tx(user_id, group_id, plan_type, quota, expires_at)
+                            logging.info(f"[auto-bind-on-join] group={group_id} auto-bound for user={user_id}")
+                    except Exception as e:
+                        logging.error(f"[auto-bind-on-join] failed: {e}")
+                        conn.rollback()
+
+                else:
+                    logging.info(f"[join] group {group_id} already has card, skip sending")
+
+            except Exception as e:
+                logging.error(f"[join] failed for group={group_id}: {e}")
                 conn.rollback()
-            continue
-
-        # 翻译消息（多语言累加）
-        if etype == "message":
-            msg = event.get("message", {})
-            if msg.get("type") != "text":
-                continue
-
-            text = msg.get("text", "").strip()
-            text_lower = text.lower()
-
-            supported = ["en", "zh-cn", "zh-tw", "ja", "ko", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar"]
-
-            if text_lower in supported:
-                cur.execute("""
-                    INSERT INTO user_prefs (user_id, group_id, target_lang)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT DO NOTHING
-                """, (user_id, group_id, text_lower))
-                conn.commit()
-                send_reply_message(reply_token, [{"type": "text", "text": f"✅ Added: {text_lower}"}])
-                continue
-
-            cur.execute("""
-                SELECT target_lang FROM user_prefs
-                WHERE user_id=%s AND group_id=%s
-            """, (user_id, group_id))
-            rows = cur.fetchall()
-            active_langs = [r[0] for r in rows] if rows else ["en"]
-
-            results = []
-            src_lang = guess_source_lang(text)
-
-            for lang in active_langs:
-                if lang == src_lang:
-                    continue
-                res, _ = translate_text(text, lang)
-                if res:
-                    results.append(f"[{lang}] {res}")
-
-            if results:
-                send_reply_message(reply_token, [{"type": "text", "text": "\n".join(results)}])
-
-            continue
-
-        # 成员变动（可留空）
-        if etype in ("memberJoined", "memberLeft"):
-            logging.info(f"Member event: {etype}")
-            continue
-
-    return "OK", 200
-
+            continue  # join 事件处理完毕后跳过后续逻辑
 
         # ==================== 成员变化时：只在群未发过卡时发送一次 ====================
         if etype in ("memberJoined", "memberLeft"):
@@ -970,7 +934,7 @@ def line_webhook():
                     if not row:
                         send_reply_message(reply_token, [{"type": "text", "text": "⚠️ 你尚未购买套餐。"}])
                         return "OK"
-                        
+
                     plan_name, expires_at = row
                     quota = PLANS[plan_name]["quota"]
 
@@ -990,7 +954,7 @@ def line_webhook():
                     conn.rollback()
                     send_reply_message(reply_token, [{"type": "text", "text": "⚠️ 系统异常，请稍后重试。"}])
                 return "OK"
-                     
+
             # B2) 语言按钮逻辑（点按卡片后的绑定）
             LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
             tnorm = text.strip().lower()
@@ -1009,7 +973,7 @@ def line_webhook():
                 except Exception as e:
                     logging.error(f"[insert user_prefs] {e}")
                     conn.rollback()
-                    
+
                 # 回复确认信息 
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Language set to: {lang_code}"}])
                 continue
@@ -1041,11 +1005,11 @@ def line_webhook():
                     conn.rollback()
                 except Exception as e:
                     pass
-                    
+
                 # 简单确认，只回本次选择的语言代码
                 send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your language: {lang_code}"}])
                 continue
-               
+
 
             # B3) 非群聊不翻译
             if not group_id:
@@ -1340,5 +1304,5 @@ def stripe_webhook():
 
 # ---------------- 启动服务 ----------------
 if __name__ == "__main__":
+    init_db()  # ✅ 首次执行时建表
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)), debug=False)
-
