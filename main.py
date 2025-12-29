@@ -88,10 +88,8 @@ _PRICE_TO_PLAN_RAW = {
 # 过滤掉可能为空的键，避免 None 或 "" 干扰匹配
 PRICE_TO_PLAN = {k: v for k, v in _PRICE_TO_PLAN_RAW.items() if k}
 # ===================== DB 连接 =====================
-DATABASE_URL = os.getenv("DATABASE_URL")
-conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-conn.autocommit = False   # ❗ 必须 False，才能手动 BEGIN/COMMIT
-cur = conn.cursor()
+conn = None
+cur = None
 
 # ===================== HTTP 会话池 =====================
 HTTP = requests.Session()
@@ -1302,5 +1300,5 @@ def stripe_webhook():
 
 # ---------------- 启动服务 ----------------
 if __name__ == "__main__":
-    init_db()  # ✅ 首次执行时建表
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)), debug=False)
+
