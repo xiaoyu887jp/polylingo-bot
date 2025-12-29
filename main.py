@@ -790,9 +790,8 @@ def _ensure_tx_clean(force_reconnect=False):
 
 @app.route("/callback", methods=["POST"])
 def line_webhook():
-    _ensure_tx_clean(force_reconnect=True)   # ✅ 必须保持连接
+    _ensure_tx_clean(force_reconnect=True)
 
-    # 1. 校验签名
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(cache=False, as_text=True)
     if LINE_CHANNEL_SECRET:
@@ -805,16 +804,17 @@ def line_webhook():
         if signature != valid_signature:
             abort(400)
 
-    # 2. 解析数据
     data = json.loads(body) if body else {}
-    for event in data.get("events", []):
+    events = data.get("events", [])
+    
+    for event in events:
         etype = event.get("type")
         source = event.get("source", {}) or {}
         user_id = source.get("userId")
         group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
 
-        # A0) 初始化免费额度
+        # 1. 初始化额度
         if user_id:
             try:
                 cur.execute("""
@@ -825,46 +825,31 @@ def line_webhook():
                     WHERE users.free_remaining IS NULL OR users.free_remaining = 0
                 """, (user_id, PLANS['Free']['quota']))
                 conn.commit()
-            except Exception as e:
-                logging.error(f"[init free quota] failed: {e}")
+            except:
                 conn.rollback()
 
-        # A) 处理入群事件 (包含你补充的自动绑定逻辑)
+        # 2. 处理入群
         if etype == "join":
             try:
                 if group_id and not has_sent_card(group_id):
                     flex = build_language_selection_flex()
                     send_reply_message(reply_token, [{
                         "type": "flex",
-                        "altText": "[Translator Bot] Please select a language / 請選擇語言",
+                        "altText": "[Translator Bot] Please select a language",
                         "contents": flex
                     }])
                     mark_card_sent(group_id)
-                    logging.info(f"[join] card sent to new group {group_id}")
-
-                    # === AUTO-BIND-ON-JOIN (自动绑定套餐) ===
-                    try:
-                        cur.execute(
-                            "SELECT plan_type, max_groups, expires_at FROM user_plans WHERE user_id=%s",
-                            (user_id,)
-                        )
-                        up = cur.fetchone()
-                        if up:
-                            plan_type, max_groups, expires_at = up
-                            quota = PLANS[plan_type]["quota"]
-                            bind_group_tx(user_id, group_id, plan_type, quota, expires_at)
-                            logging.info(f"[auto-bind-on-join] group={group_id} bound for user={user_id}")
-                    except Exception as e:
-                        logging.error(f"[auto-bind-on-join] failed: {e}")
-                        conn.rollback()
-                else:
-                    logging.info(f"[join] group {group_id} already has card, skip")
-            except Exception as e:
-                logging.error(f"[join] failed: {e}")
+                    # 自动绑定付费套餐
+                    cur.execute("SELECT plan_type, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
+                    up = cur.fetchone()
+                    if up:
+                        p_type, exp = up
+                        bind_group_tx(user_id, group_id, p_type, PLANS[p_type]["quota"], exp)
+            except:
                 conn.rollback()
             continue
 
-        # B) 处理翻译消息 (支持多语言同时翻译)
+        # 3. 处理消息 (核心：多语言累加)
         if etype == "message":
             msg = event.get("message", {})
             if msg.get("type") != "text":
@@ -873,52 +858,40 @@ def line_webhook():
             text = msg.get("text", "").strip()
             text_lower = text.lower()
 
-            # 指令：增加语言 (en, ja, ko 等)
-            supported_langs = ["en", "zh-cn", "zh-tw", "ja", "ko", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar"]
-            if text_lower in supported_langs:
-                try:
-                    cur.execute("""
-                        INSERT INTO user_prefs (user_id, group_id, target_lang)
-                        VALUES (%s, %s, %s)
-                        ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
-                    """, (user_id, group_id, text_lower))
-                    conn.commit()
-                    send_reply_message(reply_token, [{"type": "text", "text": f"✅ 已添加目标语言: {text_lower}"}])
-                except Exception as e:
-                    logging.error(f"Save pref failed: {e}")
-                    conn.rollback()
+            # 指令：增加语言
+            supported = ["en", "zh-cn", "zh-tw", "ja", "ko", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar"]
+            if text_lower in supported:
+                cur.execute("""
+                    INSERT INTO user_prefs (user_id, group_id, target_lang)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
+                """, (user_id, group_id, text_lower))
+                conn.commit()
+                send_reply_message(reply_token, [{"type": "text", "text": f"✅ Added: {text_lower}"}])
                 continue
 
-            # 指令：重置语言 (/re)
-            if text_lower in ["/re", "/reset", "/resetlang"]:
-                try:
-                    cur.execute("DELETE FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
-                    conn.commit()
-                    send_reply_message(reply_token, [{"type": "text", "text": "🗑️ 语言设置已清空。" }])
-                except Exception as e:
-                    logging.error(f"Reset failed: {e}")
-                    conn.rollback()
+            # 指令：重置
+            if text_lower in ["/re", "/reset"]:
+                cur.execute("DELETE FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
+                conn.commit()
+                send_reply_message(reply_token, [{"type": "text", "text": "🗑️ Cleared."}])
                 continue
 
-            # 执行多语言翻译
-            try:
-                cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
-                rows = cur.fetchall()
-                active_langs = [r[0] for r in rows] if rows else ["en"]
+            # 翻译逻辑
+            cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
+            rows = cur.fetchall()
+            active_langs = [r[0] for r in rows] if rows else ["en"]
 
-                translated_list = []
-                for lang in active_langs:
-                    if guess_source_lang(text) == lang:
-                        continue
-                    res, _ = translate_text(text, lang)
-                    if res:
-                        translated_list.append(f"[{lang}] {res}")
+            results = []
+            for lang in active_langs:
+                if guess_source_lang(text) == lang:
+                    continue
+                res, _ = translate_text(text, lang)
+                if res:
+                    results.append(f"[{lang}] {res}")
 
-                if translated_list:
-                    send_reply_message(reply_token, [{"type": "text", "text": "\n".join(translated_list)}])
-            except Exception as e:
-                logging.error(f"Translation logic failed: {e}")
-                conn.rollback()
+            if results:
+                send_reply_message(reply_token, [{"type": "text", "text": "\n".join(results)}])
             continue
 
     return "OK", 200
