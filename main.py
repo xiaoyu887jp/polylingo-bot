@@ -87,9 +87,13 @@ _PRICE_TO_PLAN_RAW = {
 
 # 过滤掉可能为空的键，避免 None 或 "" 干扰匹配
 PRICE_TO_PLAN = {k: v for k, v in _PRICE_TO_PLAN_RAW.items() if k}
+
 # ===================== DB 连接 =====================
-conn = None
-cur = None
+DATABASE_URL = os.getenv("DATABASE_URL")
+conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+conn.autocommit = False 
+cur = conn.cursor()
+
 
 # ===================== HTTP 会话池 =====================
 HTTP = requests.Session()
@@ -626,9 +630,17 @@ def atomic_deduct_user_free_quota(user_id: str, amount: int):
 
 # ===================== Flask 应用 =====================
 app = Flask(__name__)   # ← 这一行要放最前面
-@app.route("/", methods=["GET"])
-def health_check():
-    return "OK - polylingo bot is running", 200
+@app.route("/reset-everything-999")
+def reset_db_data():
+    try:
+        # 这几行代码会把数据库里的所有绑定和额度记录彻底删掉
+        cur.execute("TRUNCATE TABLE group_bindings, user_plans, groups, user_prefs, users CASCADE;")
+        conn.commit()
+        return "✅ 所有旧数据已清零！现在你可以把机器人当成全新的来使用了。", 200
+    except Exception as e:
+        conn.rollback()
+        return f"❌ 重置失败: {str(e)}", 500
+
 # ===== CORS：Carrd 页面跨域需要 =====
 @app.after_request
 def add_cors_headers(resp):
