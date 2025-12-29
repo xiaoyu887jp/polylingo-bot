@@ -790,9 +790,9 @@ def _ensure_tx_clean(force_reconnect=False):
 
 @app.route("/callback", methods=["POST"])
 def line_webhook():
-    _ensure_tx_clean(force_reconnect=True)   # ✅ 必须这样
+    _ensure_tx_clean(force_reconnect=True)   # ✅ 必须保持连接
 
-    # 校验签名（验证来自 LINE 官方）
+    # 1. 校验签名
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(cache=False, as_text=True)
     if LINE_CHANNEL_SECRET:
@@ -805,7 +805,7 @@ def line_webhook():
         if signature != valid_signature:
             abort(400)
 
-    # 解析 LINE Webhook 数据
+    # 2. 解析数据
     data = json.loads(body) if body else {}
     for event in data.get("events", []):
         etype = event.get("type")
@@ -814,7 +814,7 @@ def line_webhook():
         group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
 
-        # A0) 初始化免费额度（首次或额度为 0 时自动重置）
+        # A0) 初始化免费额度
         if user_id:
             try:
                 cur.execute("""
@@ -829,7 +829,7 @@ def line_webhook():
                 logging.error(f"[init free quota] failed: {e}")
                 conn.rollback()
 
-        # A) 机器人被拉入群时，若未发过语言卡则自动发送
+        # A) 处理入群事件 (包含你补充的自动绑定逻辑)
         if etype == "join":
             try:
                 if group_id and not has_sent_card(group_id):
@@ -842,8 +842,7 @@ def line_webhook():
                     mark_card_sent(group_id)
                     logging.info(f"[join] card sent to new group {group_id}")
 
-                    # === AUTO-BIND-ON-JOIN ===
-                    # ✅ 若用户已购买套餐，则在加入群时自动绑定该群（不自动分配旧群）
+                    # === AUTO-BIND-ON-JOIN (自动绑定套餐) ===
                     try:
                         cur.execute(
                             "SELECT plan_type, max_groups, expires_at FROM user_plans WHERE user_id=%s",
@@ -854,18 +853,76 @@ def line_webhook():
                             plan_type, max_groups, expires_at = up
                             quota = PLANS[plan_type]["quota"]
                             bind_group_tx(user_id, group_id, plan_type, quota, expires_at)
-                            logging.info(f"[auto-bind-on-join] group={group_id} auto-bound for user={user_id}")
+                            logging.info(f"[auto-bind-on-join] group={group_id} bound for user={user_id}")
                     except Exception as e:
                         logging.error(f"[auto-bind-on-join] failed: {e}")
                         conn.rollback()
-
                 else:
-                    logging.info(f"[join] group {group_id} already has card, skip sending")
-
+                    logging.info(f"[join] group {group_id} already has card, skip")
             except Exception as e:
-                logging.error(f"[join] failed for group={group_id}: {e}")
+                logging.error(f"[join] failed: {e}")
                 conn.rollback()
-            continue  # join 事件处理完毕后跳过后续逻辑
+            continue
+
+        # B) 处理翻译消息 (支持多语言同时翻译)
+        if etype == "message":
+            msg = event.get("message", {})
+            if msg.get("type") != "text":
+                continue
+            
+            text = msg.get("text", "").strip()
+            text_lower = text.lower()
+
+            # 指令：增加语言 (en, ja, ko 等)
+            supported_langs = ["en", "zh-cn", "zh-tw", "ja", "ko", "th", "vi", "fr", "es", "de", "id", "hi", "it", "pt", "ru", "ar"]
+            if text_lower in supported_langs:
+                try:
+                    cur.execute("""
+                        INSERT INTO user_prefs (user_id, group_id, target_lang)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
+                    """, (user_id, group_id, text_lower))
+                    conn.commit()
+                    send_reply_message(reply_token, [{"type": "text", "text": f"✅ 已添加目标语言: {text_lower}"}])
+                except Exception as e:
+                    logging.error(f"Save pref failed: {e}")
+                    conn.rollback()
+                continue
+
+            # 指令：重置语言 (/re)
+            if text_lower in ["/re", "/reset", "/resetlang"]:
+                try:
+                    cur.execute("DELETE FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
+                    conn.commit()
+                    send_reply_message(reply_token, [{"type": "text", "text": "🗑️ 语言设置已清空。" }])
+                except Exception as e:
+                    logging.error(f"Reset failed: {e}")
+                    conn.rollback()
+                continue
+
+            # 执行多语言翻译
+            try:
+                cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
+                rows = cur.fetchall()
+                active_langs = [r[0] for r in rows] if rows else ["en"]
+
+                translated_list = []
+                for lang in active_langs:
+                    if guess_source_lang(text) == lang:
+                        continue
+                    res, _ = translate_text(text, lang)
+                    if res:
+                        translated_list.append(f"[{lang}] {res}")
+
+                if translated_list:
+                    send_reply_message(reply_token, [{"type": "text", "text": "\n".join(translated_list)}])
+            except Exception as e:
+                logging.error(f"Translation logic failed: {e}")
+                conn.rollback()
+            continue
+
+    return "OK", 200
+
 
         # ==================== 成员变化时：只在群未发过卡时发送一次 ====================
         if etype in ("memberJoined", "memberLeft"):
