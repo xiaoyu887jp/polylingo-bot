@@ -896,9 +896,9 @@ def line_webhook():
                 """, (user_id, group_id, "en"))
                 conn.commit()
                 logging.info(f"[default-lang] group={group_id} user={user_id} -> en")
-         except Exception as e:
-             logging.error(f"[default-lang] failed for group={group_id}: {e}")
-             conn.rollback()
+        except Exception as e:
+            logging.error(f"[default-lang] failed for group={group_id}: {e}")
+            conn.rollback()
              
        # B) 文本消息
         if etype == "message" and (event.get("message", {}) or {}).get("type") == "text":
