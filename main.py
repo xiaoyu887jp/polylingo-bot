@@ -835,7 +835,6 @@ def line_webhook():
                     logging.info(f"[join] card sent to new group {group_id}")
 
                     # === AUTO-BIND-ON-JOIN ===
-                    # ✅ 若用户已购买套餐，则在加入群时自动绑定该群（不自动分配旧群）
                     try:
                         cur.execute(
                             "SELECT plan_type, max_groups, expires_at FROM user_plans WHERE user_id=%s",
@@ -859,7 +858,7 @@ def line_webhook():
                 conn.rollback()
             continue  # join 事件处理完毕后跳过后续逻辑
 
-        # ==================== 成员变化时：只在群未发过卡时发送一次 ====================
+        # ==================== 成员变化时 ====================
         if etype in ("memberJoined", "memberLeft"):
             try:
                 if group_id and not has_sent_card(group_id):
@@ -877,7 +876,6 @@ def line_webhook():
                 logging.error(f"[auto-card] failed for group={group_id}: {e}")
                 conn.rollback()
             continue
-
 
         # ✅ 修正版：只在「没有任何语言记录」时才设定默认英文
         try:
@@ -904,10 +902,10 @@ def line_webhook():
         if etype == "message" and (event.get("message", {}) or {}).get("type") == "text":
             text = (event.get("message", {}) or {}).get("text") or ""
 
-            # B1) 重置
+            # B1) 重置 (改为清空该群该用户的所有语言，方便重新选择组合)
             if is_reset_command(text):
                 try:
-                    cur.execute("DELETE FROM user_prefs WHERE group_id=%s", (group_id,))
+                    cur.execute("DELETE FROM user_prefs WHERE group_id=%s AND user_id=%s", (group_id, user_id))
                     conn.commit()
                 except Exception as e:
                     logging.error(f"[reset command] {e}")
@@ -936,7 +934,6 @@ def line_webhook():
             # B1.6) /bind 绑定新群
             if text.strip().lower() == "/bind" and group_id:
                 try:
-                    # 读取用户当前的套餐信息
                     cur.execute("SELECT plan_type, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
                     row = cur.fetchone()
                     if not row:
@@ -945,8 +942,6 @@ def line_webhook():
 
                     plan_name, expires_at = row
                     quota = PLANS[plan_name]["quota"]
-
-                    # 调用通用绑定函数
                     status = bind_group_tx(user_id, group_id, plan_name, quota, expires_at)
 
                     if status == "ok":
@@ -963,33 +958,25 @@ def line_webhook():
                     send_reply_message(reply_token, [{"type": "text", "text": "⚠️ 系统异常，请稍后重试。"}])
                 return "OK"
 
-            # B2) 语言按钮逻辑（点按卡片后的绑定）
+            # B2) 语言按钮逻辑（修改点：支持多语言累加模式）
             LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
             tnorm = text.strip().lower()
             if tnorm in LANG_CODES:
                 lang_code = tnorm
                 try:
-                    # 清除旧的语言设置，只保留当前语言
-                    cur.execute("DELETE FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
+                    # ✅ 不删除旧语言，直接插入新语言，如果已存在则跳过
                     cur.execute("""
                         INSERT INTO user_prefs (user_id, group_id, target_lang)
                         VALUES (%s, %s, %s)
                         ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
                     """, (user_id, group_id, lang_code))
                     conn.commit()
-                    logging.info(f"[lang set] user={user_id} group={group_id} -> {lang_code}")
-                except Exception as e:
-                    logging.error(f"[insert user_prefs] {e}")
-                    conn.rollback()
-
-                # 回复确认信息 
-                send_reply_message(reply_token, [{"type": "text", "text": f"✅ Language set to: {lang_code}"}])
-                continue
-
-                logging.info(f"[lang set] user={user_id} group={group_id} lang={lang_code}")
-
-                # 【静默绑定版】
-                try:
+                    
+                    # 获取当前已选的所有语言用于提示
+                    cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
+                    current_langs = [r[0].upper() for r in cur.fetchall()]
+                    
+                    # 【静默尝试绑定逻辑保持不变】
                     cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=%s", (user_id,))
                     row = cur.fetchone()
                     if row:
@@ -998,35 +985,23 @@ def line_webhook():
                         used = cur.fetchone()[0] or 0
                         cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
                         exists = cur.fetchone()
-
-                        if exists and exists[0] != user_id:
-                            send_reply_message(reply_token, [{
-                                "type": "text",
-                                "text": "⚠️ 该群已绑定在其他账户下，无法重复绑定。"
-                            }])
-                        elif (not exists) and ((max_groups is None) or (used < max_groups)):
+                        if (not exists) and ((max_groups is None) or (used < max_groups)):
                             cur.execute("INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s)", (group_id, user_id))
                             conn.commit()
-                        # 其他情况（已绑定在自己名下 / 达上限）静默不提示
+
+                    send_reply_message(reply_token, [{"type": "text", "text": f"✅ 已添加: {lang_code.upper()}\n目前翻译目标: {' + '.join(current_langs)}\n(输入 /reset 可重置)"}])
+                    continue
                 except Exception as e:
-                    logging.error(f"[group binding] {e}")
+                    logging.error(f"[lang set] {e}")
                     conn.rollback()
-                except Exception as e:
-                    pass
-
-                # 简单确认，只回本次选择的语言代码
-                send_reply_message(reply_token, [{"type": "text", "text": f"✅ Your language: {lang_code}"}])
-                continue
-
+                    continue
 
             # B3) 非群聊不翻译
             if not group_id:
                 continue
 
-            # ===== B3.5) 授权/名额门禁（修复点）=====
-            # 规则：优先看“群是否已有套餐”。有套餐就放行；没有套餐才看“发送者是否名额已满”，满则提示并拦截。
+            # ===== B3.5) 授权/名额门禁 =====
             try:
-                # 1) 群级套餐检查
                 cur.execute("""
                     SELECT plan_type, plan_owner, plan_remaining, expires_at
                     FROM groups
@@ -1034,7 +1009,6 @@ def line_webhook():
                 """, (group_id,))
                 g = cur.fetchone()
                 if not g:
-                    # 2) 群没有套餐：检查发送者的可绑定名额
                     cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=%s", (user_id,))
                     up = cur.fetchone()
                     if up:
@@ -1047,16 +1021,12 @@ def line_webhook():
                                 f"⚠️ 你的 {plan_type} 套餐最多可綁定 {max_groups} 個群組。\n"
                                 f"本群尚未授權，已暫停翻譯。\n\n"
                                 f"👉 在已綁定的舊群輸入 /unbind 可釋放名額；\n"
-                                f"👉 或升級套餐以增加可綁定群數：\n{buy_url}\n\n"
-                                f"⚠️ Your {plan_type} plan allows up to {max_groups} groups.\n"
-                                f"This group is not authorized; translation paused.\n"
-                                f"Use /unbind in an old group, or upgrade here:\n{buy_url}"
+                                f"👉 或升級套餐以增加可綁定群數：\n{buy_url}"
                             )
                             send_reply_message(reply_token, [{"type": "text", "text": msg[:4900]}])
-                            continue  # 不翻译，直接提示
+                            continue 
             except Exception as e:
                 logging.error(f"[bind gate] {e}")
-                # 出错时放行，避免意外挡住翻译
 
             # B4) 收集语言
             cur.execute("SELECT target_lang FROM user_prefs WHERE group_id=%s AND user_id=%s", (group_id, user_id))
@@ -1115,27 +1085,18 @@ def line_webhook():
                     if atomic_deduct_group_quota(group_id, chars_used):
                         used_paid = True
 
-                # 群套餐过期提示（中英）
                 if not used_paid and expired:
                     buy_url = build_buy_link(user_id, group_id)
-                    msg = (
-                        f"⚠️ 群套餐已到期，請重新購買\n"
-                        f"⚠️ Group plan expired. Please renew here:\n{buy_url}"
-                    )
+                    msg = (f"⚠️ 群套餐已到期，請重新購買\n⚠️ Group plan expired. Please renew here:\n{buy_url}")
                     send_reply_message(reply_token, [{"type": "text", "text": msg}])
                     continue
 
-                # 群额度不足提示
                 elif not used_paid and plan_remaining is not None and plan_remaining < chars_used:
                     buy_url = build_buy_link(user_id, group_id)
-                    msg = (
-                        f"⚠️ 本群翻譯額度不足。\n"
-                        f"⚠️ Your group quota is not enough. Please purchase more here:\n{buy_url}"
-                    )   
+                    msg = (f"⚠️ 本群翻譯額度不足。\n⚠️ Your group quota is not enough. Please purchase more here:\n{buy_url}")   
                     send_reply_message(reply_token, [{"type": "text", "text": msg}])
                     continue
 
-            # 没有群套餐时，才走个人免费额度
             if not used_paid:
                 ok, _remain = atomic_deduct_user_free_quota(user_id, chars_used)
                 if not ok:
@@ -1144,7 +1105,7 @@ def line_webhook():
                     send_reply_message(reply_token, [{"type": "text", "text": msg}])
                     continue
 
-            # B7) 发送翻译结果
+            # B7) 发送翻译结果 (会自动按照 targets 顺序排列发送)
             sender_icon = icon if ALWAYS_USER_AVATAR else BOT_AVATAR_FALLBACK
             messages = []
             for lang_code, txt in translations:
@@ -1157,7 +1118,6 @@ def line_webhook():
                 send_reply_message(reply_token, messages[:5])
 
     return "OK"
-
 # ===================== Group Binding Logic (通用群组绑定逻辑) =====================
 def bind_group_tx(user_id: str, group_id: str, plan_name: str, quota: int, expires_at):
     """通用群绑定逻辑：用于 webhook 或 /bind 指令"""
