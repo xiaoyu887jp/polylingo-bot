@@ -92,8 +92,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 conn = psycopg2.connect(DATABASE_URL, sslmode="require")
 conn.autocommit = False   # ❗ 必须 False，才能手动 BEGIN/COMMIT
 cur = conn.cursor()
-conn = None
-cur = None
+
 
 # ===================== HTTP 会话池 =====================
 HTTP = requests.Session()
