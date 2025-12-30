@@ -879,19 +879,27 @@ def line_webhook():
             continue
 
 
-        # ✅ 修正版：默认只设定英文，不再插入16种语言，彻底防止多语言翻译爆发
+        # ✅ 修正版：只在「没有任何语言记录」时才设定默认英文
         try:
             cur.execute("""
-                INSERT INTO user_prefs (user_id, group_id, target_lang)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
-            """, (user_id, group_id, "en"))
-            conn.commit()
-            logging.info(f"[default-lang] group={group_id} user={user_id} -> en")
-        except Exception as e:
-            logging.error(f"[default-lang] failed for group={group_id}: {e}")
-            conn.rollback()
+                SELECT 1 FROM user_prefs
+                WHERE user_id=%s AND group_id=%s
+                LIMIT 1
+            """, (user_id, group_id))
+            exists = cur.fetchone()
 
+            if not exists:
+                cur.execute("""
+                    INSERT INTO user_prefs (user_id, group_id, target_lang)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                """, (user_id, group_id, "en"))
+                conn.commit()
+                logging.info(f"[default-lang] group={group_id} user={user_id} -> en")
+         except Exception as e:
+             logging.error(f"[default-lang] failed for group={group_id}: {e}")
+             conn.rollback()
+             
        # B) 文本消息
         if etype == "message" and (event.get("message", {}) or {}).get("type") == "text":
             text = (event.get("message", {}) or {}).get("text") or ""
