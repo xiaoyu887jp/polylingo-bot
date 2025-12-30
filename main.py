@@ -989,7 +989,7 @@ def line_webhook():
                             cur.execute("INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s)", (group_id, user_id))
                             conn.commit()
 
-                    send_reply_message(reply_token, [{"type": "text", "text": f"✅ 已添加: {lang_code.upper()}\n目前翻译目标: {' + '.join(current_langs)}\n(输入 /reset 可重置)"}])
+                    send_reply_message(reply_token, [{"type": "text", "text": f"✅ Language set to: {' + '.join(current_langs)}"}])
                     continue
                 except Exception as e:
                     logging.error(f"[lang set] {e}")
