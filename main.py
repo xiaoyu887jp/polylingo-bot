@@ -93,7 +93,6 @@ conn = psycopg2.connect(DATABASE_URL, sslmode="require")
 conn.autocommit = False   # ❗ 必须 False，才能手动 BEGIN/COMMIT
 cur = conn.cursor()
 
-
 # ===================== HTTP 会话池 =====================
 HTTP = requests.Session()
 HTTP.headers.update({"Connection": "keep-alive"})
@@ -150,33 +149,6 @@ def build_group_quota_alert(user_id: str, group_id: Optional[str] = None) -> str
 ALWAYS_USER_AVATAR = True
 BOT_AVATAR_FALLBACK = "https://i.imgur.com/sTqykvy.png"
 
-# ===================== 计划与额度（含 Stripe price_id） =====================
-PLANS = {
-    'Free': {
-        'quota': 5000,
-        'max_groups': 0
-    },
-    'Starter': {
-        'quota': 300000,
-        'max_groups': 1,
-        'price_id': 'price_1SMP7iLhMUG5xYCs8HGxpDMY'  # 入門方案
-    },
-    'Basic': {
-        'quota': 1000000,
-        'max_groups': 3,
-        'price_id': 'price_1SMP9oLhMUG5xYCstJo6DBZA'  # 基礎方案
-    },
-    'Pro': {
-        'quota': 2000000,
-        'max_groups': 5,
-        'price_id': 'price_1SMPATLhMUG5xYCs3HPYy0ur'  # 進階方案
-    },
-    'Expert': {
-        'quota': 4000000,
-        'max_groups': 10,
-        'price_id': 'price_1SMPBILhMUG5xYCstKviBHIE'  # 專業方案
-    }
-}
 
 # ===================== 支持的重置指令 =====================
 RESET_ALIASES = {"/re", "/reset", "/resetlang"}
@@ -876,27 +848,7 @@ def line_webhook():
                 conn.rollback()
             continue
 
-        # ✅ 修正版：只在「没有任何语言记录」时才设定默认英文
-        try:
-            cur.execute("""
-                SELECT 1 FROM user_prefs
-                WHERE user_id=%s AND group_id=%s
-                LIMIT 1
-            """, (user_id, group_id))
-            exists = cur.fetchone()
-
-            if not exists:
-                cur.execute("""
-                    INSERT INTO user_prefs (user_id, group_id, target_lang)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT DO NOTHING
-                """, (user_id, group_id, "en"))
-                conn.commit()
-                logging.info(f"[default-lang] group={group_id} user={user_id} -> en")
-        except Exception as e:
-            logging.error(f"[default-lang] failed for group={group_id}: {e}")
-            conn.rollback()
-             
+       
        # B) 文本消息
         if etype == "message" and (event.get("message", {}) or {}).get("type") == "text":
             text = (event.get("message", {}) or {}).get("text") or ""
@@ -1266,7 +1218,6 @@ def stripe_webhook():
 
     logging.info("✅ Webhook logic executed successfully")
     return "OK", 200
-
 
 
 # ---------------- 启动服务 ----------------
