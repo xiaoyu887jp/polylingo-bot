@@ -755,6 +755,41 @@ def _ensure_tx_clean(force_reconnect=False):
 def line_webhook():
     _ensure_tx_clean(force_reconnect=True)   # ✅ 必须这样
 
+    # ============= 🔴 到期自动清空逻辑开始 =============
+    try:
+        # 获取发送消息的人
+        _body = request.get_data(as_text=True)
+        _data = json.loads(_body)
+        for _ev in _data.get("events", []):
+            _uid = _ev.get("source", {}).get("userId")
+            if not _uid: continue
+
+            # 去数据库查他的到期时间
+            cur.execute("SELECT expires_at FROM user_plans WHERE user_id=%s", (_uid,))
+            _plan = cur.fetchone()
+            if _plan and _plan[0]:
+                import datetime
+                _exp_str = _plan[0] # 数据库日期
+                _today = datetime.datetime.now().strftime("%Y-%m-%d")
+
+                # 如果今天已经过期了
+                if _today > _exp_str:
+                    # ⚠️ 执行大清空：删掉他绑定的所有群名额
+                    cur.execute("DELETE FROM group_bindings WHERE owner_id=%s", (_uid,))
+                    # ⚠️ 执行大清空：删掉他所有的语言偏好设置
+                    cur.execute("DELETE FROM user_prefs WHERE user_id=%s", (_uid,))
+                    # 将他的计划打回原型 (Free)
+                    cur.execute("UPDATE user_plans SET plan_type='Free', max_groups=0 WHERE user_id=%s", (_uid,))
+                    conn.commit()
+                    
+                    # 发送告警通知
+                    send_push_text(_uid, "⚠️ 套餐已過期，系統已自動解除所有群組綁定並清空設定。\nPlan expired. All settings cleared.")
+                    return "OK" # 拦截，不执行后续翻译
+    except Exception as e:
+        logging.error(f"Critical Expiry Check Error: {e}")
+        conn.rollback()
+    # ============= 🔴 到期自动清空逻辑结束 =============
+    
     # 校验签名（验证来自 LINE 官方）
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(cache=False, as_text=True)
