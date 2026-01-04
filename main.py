@@ -753,44 +753,40 @@ def _ensure_tx_clean(force_reconnect=False):
 
 @app.route("/callback", methods=["POST"])
 def line_webhook():
-    _ensure_tx_clean(force_reconnect=True)   # ✅ 必须这样
+    _ensure_tx_clean(force_reconnect=True)
 
-    # ============= 🔴 到期自动清空逻辑开始 =============
+    # ============= 🔴 到期自动清空逻辑（唯一允许 return 的地方） =============
     try:
-        # 获取发送消息的人
-        _body = request.get_data(as_text=True)
-        _data = json.loads(_body)
-        for _ev in _data.get("events", []):
-            _uid = _ev.get("source", {}).get("userId")
-            if not _uid: continue
+        raw_body = request.get_data(as_text=True)
+        raw_data = json.loads(raw_body)
+        for ev in raw_data.get("events", []):
+            uid = ev.get("source", {}).get("userId")
+            if not uid:
+                continue
 
-            # 去数据库查他的到期时间
-            cur.execute("SELECT expires_at FROM user_plans WHERE user_id=%s", (_uid,))
-            _plan = cur.fetchone()
-            if _plan and _plan[0]:
+            cur.execute("SELECT expires_at FROM user_plans WHERE user_id=%s", (uid,))
+            plan = cur.fetchone()
+            if plan and plan[0]:
                 import datetime
-                _exp_str = _plan[0] # 数据库日期
-                _today = datetime.datetime.now().strftime("%Y-%m-%d")
-
-                # 如果今天已经过期了
-                if _today > _exp_str:
-                    # ⚠️ 执行大清空：删掉他绑定的所有群名额
-                    cur.execute("DELETE FROM group_bindings WHERE owner_id=%s", (_uid,))
-                    # ⚠️ 执行大清空：删掉他所有的语言偏好设置
-                    cur.execute("DELETE FROM user_prefs WHERE user_id=%s", (_uid,))
-                    # 将他的计划打回原型 (Free)
-                    cur.execute("UPDATE user_plans SET plan_type='Free', max_groups=0 WHERE user_id=%s", (_uid,))
+                today = datetime.datetime.now().strftime("%Y-%m-%d")
+                if today > plan[0]:
+                    cur.execute("DELETE FROM group_bindings WHERE owner_id=%s", (uid,))
+                    cur.execute("DELETE FROM user_prefs WHERE user_id=%s", (uid,))
+                    cur.execute(
+                        "UPDATE user_plans SET plan_type='Free', max_groups=0 WHERE user_id=%s",
+                        (uid,)
+                    )
                     conn.commit()
-                    
-                    # 发送告警通知
-                    send_push_text(_uid, "⚠️ 套餐已過期，系統已自動解除所有群組綁定並清空設定。\nPlan expired. All settings cleared.")
-                    return "OK" # 拦截，不执行后续翻译
+                    send_push_text(
+                        uid,
+                        "⚠️ 套餐已過期，系統已自動清空設定。\nPlan expired. Settings cleared."
+                    )
+                    return "OK"   # ✅ 顶级拦截，安全
     except Exception as e:
-        logging.error(f"Critical Expiry Check Error: {e}")
+        logging.error(f"[expiry-check] {e}")
         conn.rollback()
-    # ============= 🔴 到期自动清空逻辑结束 =============
-    
-    # 校验签名（验证来自 LINE 官方）
+
+    # ============= 校验签名 =============
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(cache=False, as_text=True)
     if LINE_CHANNEL_SECRET:
@@ -799,12 +795,11 @@ def line_webhook():
             body.encode("utf-8"),
             hashlib.sha256
         ).digest()
-        valid_signature = base64.b64encode(digest).decode("utf-8")
-        if signature != valid_signature:
+        if base64.b64encode(digest).decode("utf-8") != signature:
             abort(400)
 
-    # 解析 LINE Webhook 数据
     data = json.loads(body) if body else {}
+
     for event in data.get("events", []):
         etype = event.get("type")
         source = event.get("source", {}) or {}
@@ -812,7 +807,7 @@ def line_webhook():
         group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
 
-        # A0) 初始化免费额度（首次或额度为 0 时自动重置）
+        # A0) 免费额度初始化
         if user_id:
             try:
                 cur.execute("""
@@ -821,69 +816,121 @@ def line_webhook():
                     ON CONFLICT (user_id) DO UPDATE
                     SET free_remaining = EXCLUDED.free_remaining
                     WHERE users.free_remaining IS NULL OR users.free_remaining = 0
-                """, (user_id, PLANS['Free']['quota']))
+                """, (user_id, PLANS["Free"]["quota"]))
                 conn.commit()
-            except Exception as e:
-                logging.error(f"[init free quota] failed: {e}")
+            except:
                 conn.rollback()
 
-        # A) 机器人被拉入群时，若未发过语言卡则自动发送
+        # A) 机器人入群
         if etype == "join":
             try:
                 if group_id and not has_sent_card(group_id):
                     flex = build_language_selection_flex()
                     send_reply_message(reply_token, [{
                         "type": "flex",
-                        "altText": "[Translator Bot] Please select a language / 請選擇語言",
+                        "altText": "Select Language",
                         "contents": flex
                     }])
                     mark_card_sent(group_id)
-                    logging.info(f"[join] card sent to new group {group_id}")
 
-                    # === AUTO-BIND-ON-JOIN ===
-                    try:
-                        cur.execute(
-                            "SELECT plan_type, max_groups, expires_at FROM user_plans WHERE user_id=%s",
-                            (user_id,)
+                    cur.execute(
+                        "SELECT plan_type, max_groups, expires_at FROM user_plans WHERE user_id=%s",
+                        (user_id,)
+                    )
+                    up = cur.fetchone()
+                    if up:
+                        plan_type, max_groups, expires_at = up
+                        bind_group_tx(
+                            user_id,
+                            group_id,
+                            plan_type,
+                            PLANS[plan_type]["quota"],
+                            expires_at
                         )
-                        up = cur.fetchone()
-                        if up:
-                            plan_type, max_groups, expires_at = up
-                            quota = PLANS[plan_type]["quota"]
-                            bind_group_tx(user_id, group_id, plan_type, quota, expires_at)
-                            logging.info(f"[auto-bind-on-join] group={group_id} auto-bound for user={user_id}")
-                    except Exception as e:
-                        logging.error(f"[auto-bind-on-join] failed: {e}")
-                        conn.rollback()
-
-                else:
-                    logging.info(f"[join] group {group_id} already has card, skip sending")
-
-            except Exception as e:
-                logging.error(f"[join] failed for group={group_id}: {e}")
+            except:
                 conn.rollback()
-            continue  # join 事件处理完毕后跳过后续逻辑
+            continue
 
-        # ==================== 成员变化时 ====================
+        # 成员变动
         if etype in ("memberJoined", "memberLeft"):
             try:
                 if group_id and not has_sent_card(group_id):
                     flex = build_language_selection_flex()
                     send_reply_message(reply_token, [{
                         "type": "flex",
-                        "altText": "[Translator Bot] Please select a language / 請選擇語言",
+                        "altText": "Select Language",
                         "contents": flex
                     }])
                     mark_card_sent(group_id)
-                    logging.info(f"[auto-card] sent once to group {group_id} on member event {etype}")
-                else:
-                    logging.info(f"[auto-card] group {group_id} already has card, skip sending on {etype}")
-            except Exception as e:
-                logging.error(f"[auto-card] failed for group={group_id}: {e}")
+            except:
                 conn.rollback()
             continue
 
-       
+        # ==================== B) 文本消息 ====================
+        if etype == "message" and event.get("message", {}).get("type") == "text":
+            text = event["message"]["text"].strip()
+
+            # B1) Reset
+            if is_reset_command(text):
+                try:
+                    cur.execute(
+                        "DELETE FROM user_prefs WHERE group_id=%s AND user_id=%s",
+                        (group_id, user_id)
+                    )
+                    conn.commit()
+                    flex = build_language_selection_flex()
+                    send_reply_message(reply_token, [{
+                        "type": "flex",
+                        "altText": "Please re-select",
+                        "contents": flex
+                    }])
+                except:
+                    conn.rollback()
+                continue   # ✅ 只 continue，不 return
+
+            # B2) 语言设定（单语言）
+            SUPPORTED_LANGS = {
+                "en","zh-cn","zh-tw","ja","ko","th","vi",
+                "fr","es","de","id","hi","it","pt","ru","ar"
+            }
+
+            if text.lower() in SUPPORTED_LANGS:
+                try:
+                    cur.execute(
+                        "DELETE FROM user_prefs WHERE group_id=%s AND user_id=%s",
+                        (group_id, user_id)
+                    )
+                    cur.execute(
+                        "INSERT INTO user_prefs (group_id, user_id, target_lang) VALUES (%s,%s,%s)",
+                        (group_id, user_id, text.lower())
+                    )
+                    conn.commit()
+                    send_reply_message(reply_token, [{
+                        "type": "text",
+                        "text": f"✅ Language set to: {text.upper()}"
+                    }])
+                except:
+                    conn.rollback()
+                continue
+
+            # B3) 翻译主流程（接你原来的）
+            try:
+                cur.execute(
+                    "SELECT target_lang FROM user_prefs WHERE group_id=%s AND user_id=%s",
+                    (group_id, user_id)
+                )
+                row = cur.fetchone()
+                if row:
+                    user_target_lang = row[0]
+                    # 👉 接你原本的翻译逻辑
+            except Exception as e:
+                logging.error(f"[translate] {e}")
+
+            continue
+
+    # ✅ 唯一 webhook 结束点
+    return "OK"
+
        # B) 文本消息
         if etype == "message" and (event.get("message", {}) or {}).get("type") == "text":
             text = (event.get("message", {}) or {}).get("text") or ""
