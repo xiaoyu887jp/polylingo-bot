@@ -781,12 +781,12 @@ def line_webhook():
                         uid,
                         "⚠️ 套餐已過期，系統已自動清空設定。\nPlan expired. Settings cleared."
                     )
-                    return "OK"   # ✅ 顶级拦截，安全
+                    return "OK"  # ✅ 顶级拦截，过期后不执行任何后续
     except Exception as e:
         logging.error(f"[expiry-check] {e}")
         conn.rollback()
 
-    # ============= 校验签名 =============
+    # ============= 校验签名（验证来自 LINE 官方） =============
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(cache=False, as_text=True)
     if LINE_CHANNEL_SECRET:
@@ -800,6 +800,7 @@ def line_webhook():
 
     data = json.loads(body) if body else {}
 
+    # ============= 开始处理 LINE 事件循环 =============
     for event in data.get("events", []):
         etype = event.get("type")
         source = event.get("source", {}) or {}
@@ -821,7 +822,7 @@ def line_webhook():
             except:
                 conn.rollback()
 
-        # A) 机器人入群
+        # A) 机器人入群逻辑
         if etype == "join":
             try:
                 if group_id and not has_sent_card(group_id):
@@ -849,9 +850,9 @@ def line_webhook():
                         )
             except:
                 conn.rollback()
-            continue
+            continue # ✅ 继续处理下一个事件
 
-        # 成员变动
+        # A2) 成员变动逻辑
         if etype in ("memberJoined", "memberLeft"):
             try:
                 if group_id and not has_sent_card(group_id):
@@ -864,13 +865,13 @@ def line_webhook():
                     mark_card_sent(group_id)
             except:
                 conn.rollback()
-            continue
+            continue # ✅ 继续处理下一个事件
 
-        # ==================== B) 文本消息 ====================
+        # ==================== B) 文本消息处理逻辑 ====================
         if etype == "message" and event.get("message", {}).get("type") == "text":
             text = event["message"]["text"].strip()
 
-            # B1) Reset
+            # B1) Reset 指令逻辑
             if is_reset_command(text):
                 try:
                     cur.execute(
@@ -886,14 +887,13 @@ def line_webhook():
                     }])
                 except:
                     conn.rollback()
-                continue   # ✅ 只 continue，不 return
+                continue  # ✅ 只 continue，不 return
 
-            # B2) 语言设定（单语言）
+            # B2) 语言设定逻辑（单语言，支持“先删后存”解决叠加 Bug）
             SUPPORTED_LANGS = {
                 "en","zh-cn","zh-tw","ja","ko","th","vi",
                 "fr","es","de","id","hi","it","pt","ru","ar"
             }
-
             if text.lower() in SUPPORTED_LANGS:
                 try:
                     cur.execute(
@@ -911,9 +911,9 @@ def line_webhook():
                     }])
                 except:
                     conn.rollback()
-                continue
+                continue # ✅ 设置完语言，继续等待下一条翻译，不执行后续
 
-            # B3) 翻译主流程（接你原来的）
+            # B3) 翻译主流程核心衔接
             try:
                 cur.execute(
                     "SELECT target_lang FROM user_prefs WHERE group_id=%s AND user_id=%s",
@@ -922,15 +922,18 @@ def line_webhook():
                 row = cur.fetchone()
                 if row:
                     user_target_lang = row[0]
-                    # 👉 接你原本的翻译逻辑
+                    # --------------------------------------------------
+                    # 👉 请在这里粘贴你原本代码中“很大一段”的翻译逻辑代码
+                    # --------------------------------------------------
+                    
             except Exception as e:
-                logging.error(f"[translate] {e}")
+                logging.error(f"[translate flow] error: {e}")
 
+            # 处理完这条消息，跳到下一个事件
             continue
 
-    # ✅ 唯一 webhook 结束点
+    # ✅ 整个循环跑完，全程序唯一的收尾 return
     return "OK"
-
        # B) 文本消息
         if etype == "message" and (event.get("message", {}) or {}).get("type") == "text":
             text = (event.get("message", {}) or {}).get("text") or ""
