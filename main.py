@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 import os
 import re
@@ -951,15 +950,53 @@ def line_webhook():
             if tnorm in LANG_CODES:
                 lang_code = tnorm
                 try:
-                    # ✅ 不删除旧语言，直接插入新语言，如果已存在则跳过
-                    cur.execute("""
-                        INSERT INTO user_prefs (user_id, group_id, target_lang)
-                        VALUES (%s, %s, %s)
-                        ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
-                    """, (user_id, group_id, lang_code))
-                    conn.commit()
+                    # B2) 语言按钮逻辑（修改点：支持多语言累加模式）
+                    LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
+                    tnorm = text.strip().lower()
+                    if tnorm in LANG_CODES:
+                        lang_code = tnorm
+                        try:
+                            # 查这个语言有没有选过
+                            cur.execute("""
+                                SELECT 1
+                                WHERE user_id=%s AND group_id=%s AND target_lang=%s
+                            """, (user_id, group_id, lang_code))   
+
+                            exists = cur.fetchone()
+
+                            # 没选过才插入
+                            if not exists:
+                                cur.execute("""
+                                    INSERT INTO user_prefs (user_id, group_id, target_lang)
+                                    VALUES (%s, %s, %s)
+                                """, (user_id, group_id, lang_code))
+                                conn.commit()
+
+                            # 回显当前这个人选的语言
+                            cur.execute("""
+                                SELECT target_lang
+                                FROM user_prefs
+                                WHERE user_id=%s AND group_id=%s
+                            """, (user_id, group_id))
+
+                            langs = [r[0].upper() for r in cur.fetchall()]
+
+                            send_reply_message(reply_token, [{
+                                "type": "text",
+                                "text": f"✅ Language set to: {' + '.join(langs)}"
+                            }])
+                        except Exception as e:
+                            conn.rollback()
+                            logging.error(f"[lang set error] {e}")
+                        continue
+                                
+                            
+                            # 3. 获取更新后的语言列表用于显示反馈（此段保持不变）
+                            cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
+                            current_langs = [r[0].upper() for r in cur.fetchall()]
+                            
                     
-                    # 获取当前已选的所有语言用于提示
+                 # 获取当前已选的所有语言用于提示
                     cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
                     current_langs = [r[0].upper() for r in cur.fetchall()]
                     
