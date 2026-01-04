@@ -981,7 +981,7 @@ def line_webhook():
                     conn.commit()
                     
                     # 获取当前已选的所有语言用于提示
-                    cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
+                    cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s ORDER BY created_at ASC", (user_id, group_id))
                     current_langs = [r[0].upper() for r in cur.fetchall()]
                     
                     # 【静默尝试绑定逻辑保持不变】
