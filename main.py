@@ -864,28 +864,7 @@ def line_webhook():
                 logging.error(f"[join] failed for group={group_id}: {e}")
                 conn.rollback()
             continue  # join 事件处理完毕后跳过后续逻辑
-        # ===== ✅ Reset 按钮（Flex postback）=====
-        if etype == "postback":
-            data_pb = (event.get("postback") or {}).get("data", "")
-            if data_pb == "reset_lang":
-                try:
-                    cur.execute(
-                        "DELETE FROM user_prefs WHERE group_id=%s AND user_id=%s",
-                        (group_id, user_id)
-                    )
-                    conn.commit()
-                except Exception as e:
-                    conn.rollback()
-                    logging.error(f"[postback reset] {e}")
 
-                flex = build_language_selection_flex()
-                send_reply_message(reply_token, [{
-                    "type": "flex",
-                    "altText": "[Translator Bot] Please select a language / 請選擇語言",
-                    "contents": flex
-                }])
-                continue
-                        
         # ==================== 成员变化时 ====================
         if etype in ("memberJoined", "memberLeft"):
             try:
@@ -981,7 +960,7 @@ def line_webhook():
                     conn.commit()
                     
                     # 获取当前已选的所有语言用于提示
-                    cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s ORDER BY created_at ASC", (user_id, group_id))
+                    cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
                     current_langs = [r[0].upper() for r in cur.fetchall()]
                     
                     # 【静默尝试绑定逻辑保持不变】
