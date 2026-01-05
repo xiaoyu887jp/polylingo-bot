@@ -813,6 +813,9 @@ def line_webhook():
         group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
 
+        logging.info(f"[DEBUG USER] user_id={user_id} group_id={group_id} etype={etype}")
+
+
         # A0) 初始化免费额度（首次或额度为 0 时自动重置）
         if user_id:
             try:
