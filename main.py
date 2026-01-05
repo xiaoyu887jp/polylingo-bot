@@ -19,6 +19,11 @@ from urllib3.util.retry import Retry
 from concurrent.futures import ThreadPoolExecutor
 from linebot import LineBotApi  # 仅为兼容保留，不直接使用
 
+# ===== ADMIN 测试用：强制到期用户 =====
+ADMIN_FORCE_EXPIRED_USERS = {
+    "Uc572e694c326e9704bba84458b0d2729"
+}
+
 # ===== Stripe Plan Definitions =====
 PRICE_TO_PLAN = {
     "price_1QxABCstarter": "Starter",
