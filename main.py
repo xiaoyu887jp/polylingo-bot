@@ -1022,7 +1022,7 @@ def line_webhook():
             configured = [row[0].lower() for row in cur.fetchall() if row and row[0]]
             configured = list(dict.fromkeys(configured))
             if not configured:
-                tip = "請先為【你自己】設定翻譯語言，輸入 /re /reset /resetlang 會出現語言卡片。\nSet your language with /re."
+                tip = "Enter the language you want to use"
                 send_reply_message(reply_token, [{"type": "text", "text": tip}])
                 continue
 
