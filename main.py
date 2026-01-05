@@ -1022,7 +1022,8 @@ def line_webhook():
             configured = [row[0].lower() for row in cur.fetchall() if row and row[0]]
             configured = list(dict.fromkeys(configured))
             if not configured:
-                tip = "Enter the language you want to use"
+                tip = "Type /re to open the language card"
+
                 send_reply_message(reply_token, [{"type": "text", "text": tip}])
                 continue
 
