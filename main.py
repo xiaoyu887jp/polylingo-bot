@@ -158,9 +158,6 @@ import os, shutil, logging
 
 # ===================== 初始化数据库结构 =====================
 def init_db():
-    # 👇 临时增加下面这一行，运行一次后可以删掉
-    cur.execute("DROP TABLE IF EXISTS user_prefs;")
-    
     tables = [
         """
         CREATE TABLE IF NOT EXISTS users (
