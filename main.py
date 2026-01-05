@@ -773,6 +773,11 @@ def line_webhook():
             # 去数据库查他的到期时间
             cur.execute("SELECT expires_at FROM user_plans WHERE user_id=%s", (_uid,))
             _plan = cur.fetchone()
+
+            # ===== ADMIN FORCE EXPIRED (TEST ONLY) =====
+            if _uid in ADMIN_FORCE_EXPIRED_USERS:
+                _plan = ("1970-01-01",)  # 强制视为已过期
+                
             if _plan and _plan[0]:
                 import datetime
                 _exp_str = _plan[0] # 数据库日期
