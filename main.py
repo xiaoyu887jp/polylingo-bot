@@ -28,6 +28,7 @@ PRICE_TO_PLAN = {
 }
 
 PLANS = {
+    "Free":    {"max_groups": 0, "quota": 5000},
     "Starter": {"max_groups": 1, "quota": 300000},
     "Basic":   {"max_groups": 3, "quota": 1000000},
     "Pro":     {"max_groups": 5, "quota": 2000000},
