@@ -170,7 +170,7 @@ def init_db():
             user_id TEXT,
             group_id TEXT,
             target_lang TEXT,
-            PRIMARY KEY(user_id, group_id, target_lang)
+            PRIMARY KEY(user_id, group_id)
         )
         """,
         """
