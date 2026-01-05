@@ -888,10 +888,10 @@ def line_webhook():
         if etype == "message" and (event.get("message", {}) or {}).get("type") == "text":
             text = (event.get("message", {}) or {}).get("text") or ""
 
-            # B1) 重置 (改为清空该群该用户的所有语言，方便重新选择组合)
+            # B1) 重置 (清空该群所有人的语言设定，让大家重新点击卡片选择)
             if is_reset_command(text):
                 try:
-                    cur.execute("DELETE FROM user_prefs WHERE group_id=%s AND user_id=%s", (group_id, user_id))
+                    cur.execute("DELETE FROM user_prefs WHERE group_id=%s", (group_id,))
                     conn.commit()
                 except Exception as e:
                     logging.error(f"[reset command] {e}")
