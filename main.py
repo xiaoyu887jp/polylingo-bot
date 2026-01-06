@@ -900,7 +900,8 @@ def line_webhook():
                     p_info = cur.fetchone()
                     if p_info: bind_group_tx(user_id, group_id, p_info[0], PLANS[p_info[0]]["quota"], p_info[1])
 
-                    send_reply_message(reply_token, [{"type": "text", "text": f"✅ 已添加目標語言: {' + '.join(all_langs)}"}])
+                    send_reply_message(reply_token, [{"type": "text", "text": f"✅ Language set to: {' + '.join(all_langs)}"}])
+
                 except: conn.rollback()
                 continue
 
