@@ -817,7 +817,7 @@ def line_webhook():
                 # 双重提示：Push（告知清理） + Reply（告知购买）
                 send_push_text(user_id, "⚠️ 套餐已過期，所有綁定名額已釋放，設定已重置。\nYour plan has expired and all settings were cleared.")
                 buy_url = build_buy_link(user_id, group_id)
-                send_reply_message(reply_token, [{"type": "text", "text": f"⚠️ 您的套餐已過期，請重新購買：\n🛒 {buy_url}"}])
+                send_reply_message(reply_token, [{"type": "text", "text": f"⚠️ 您的套餐已過期，翻譯服務已暫停。\nYour plan has expired. Translation paused.\n\n👉 請重新購買以恢復服務 / Please renew here:\n{buy_url}"}])
                 continue # 👈 强制终止，此用户后续任何指令或翻译都不会触发
         except Exception as e:
             logging.error(f"Guard Logic Crash: {e}")
