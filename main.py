@@ -756,374 +756,237 @@ def _ensure_tx_clean(force_reconnect=False):
         except Exception as e2:
             logging.error(f"[db-reconnect-failed] {e2}")
 
-
 @app.route("/callback", methods=["POST"])
 def line_webhook():
-    _ensure_tx_clean(force_reconnect=True)   # ✅ 必须这样
-
-    # ============= 🔴 到期自动清空逻辑开始 =============
-    try:
-        # 获取发送消息的人
-        _body = request.get_data(as_text=True)
-        _data = json.loads(_body)
-        for _ev in _data.get("events", []):
-            _uid = _ev.get("source", {}).get("userId")
-            if not _uid: continue
-
-            # 去数据库查他的到期时间
-            cur.execute("SELECT expires_at FROM user_plans WHERE user_id=%s", (_uid,))
-            _plan = cur.fetchone()
-
-            # ===== ADMIN FORCE EXPIRED (TEST ONLY) =====
-            if _uid in ADMIN_FORCE_EXPIRED_USERS:
-                _plan = ("1970-01-01",)  # 强制视为已过期
-                
-            if _plan and _plan[0]:
-                import datetime
-                _exp_str = _plan[0] # 数据库日期
-                _today = datetime.datetime.now().strftime("%Y-%m-%d")
-
-                # 如果今天已经过期了
-                if _today > _exp_str:
-                    # ⚠️ 执行大清空：删掉他绑定的所有群名额
-                    cur.execute("DELETE FROM group_bindings WHERE owner_id=%s", (_uid,))
-                    # ⚠️ 执行大清空：删掉他所有的语言偏好设置
-                    cur.execute("DELETE FROM user_prefs WHERE user_id=%s", (_uid,))
-                    # 将他的计划打回原型 (Free)
-                    cur.execute("UPDATE user_plans SET plan_type='Free', max_groups=0 WHERE user_id=%s", (_uid,))
-                    conn.commit()
-                    
-                    # 发送告警通知
-                    send_push_text(_uid, "⚠️ 套餐已過期，系統已自動解除所有群組綁定並清空設定。\nPlan expired. All settings cleared.")
-                    # 4️⃣ 当前请求立即拦截（这是你刚指出缺失的那一段）
-                    send_reply_message(reply_token, [{
-                        "type": "text",
-                        "text": "Your plan has expired.\nPlease purchase again to continue."
-                    }])
-
-                    return "OK"  # ⛔ 终止本次 webhook，不进入翻译
-
-    except Exception as e:
-        logging.error(f"Critical Expiry Check Error: {e}")
-        conn.rollback()
-    # ============= 🔴 到期自动清空逻辑结束 =============
+    # 确保数据库事务状态清洁
+    _ensure_tx_clean(force_reconnect=True) 
     
-    # 校验签名（验证来自 LINE 官方）
+    # 1. 安全验签（严格保持你的 HMAC-SHA256 逻辑）
     signature = request.headers.get("X-Line-Signature", "")
-    body = request.get_data(cache=False, as_text=True)
+    body = request.get_data(as_text=True)
     if LINE_CHANNEL_SECRET:
-        digest = hmac.new(
-            LINE_CHANNEL_SECRET.encode("utf-8"),
-            body.encode("utf-8"),
-            hashlib.sha256
-        ).digest()
-        valid_signature = base64.b64encode(digest).decode("utf-8")
-        if signature != valid_signature:
+        digest = hmac.new(LINE_CHANNEL_SECRET.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).digest()
+        if signature != base64.b64encode(digest).decode("utf-8"):
             abort(400)
 
-    # 解析 LINE Webhook 数据
+    # 2. 解析事件流
     data = json.loads(body) if body else {}
-    for event in data.get("events", []):
+    events = data.get("events", [])
+
+    for event in events:
         etype = event.get("type")
         source = event.get("source", {}) or {}
         user_id = source.get("userId")
         group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
 
-        logging.info(f"[DEBUG USER] user_id={user_id} group_id={group_id} etype={etype}")
-
-
-        # A0) 初始化免费额度（首次或额度为 0 时自动重置）
-        if user_id:
-            try:
-                cur.execute("""
-                    INSERT INTO users (user_id, free_remaining)
-                    VALUES (%s, %s)
-                    ON CONFLICT (user_id) DO UPDATE
-                    SET free_remaining = EXCLUDED.free_remaining
-                    WHERE users.free_remaining IS NULL OR users.free_remaining = 0
-                """, (user_id, PLANS['Free']['quota']))
-                conn.commit()
-            except Exception as e:
-                logging.error(f"[init free quota] failed: {e}")
-                conn.rollback()
-
-        # A) 机器人被拉入群时，若未发过语言卡则自动发送
-        if etype == "join":
-            try:
-                if group_id and not has_sent_card(group_id):
-                    flex = build_language_selection_flex()
-                    send_reply_message(reply_token, [{
-                        "type": "flex",
-                        "altText": "[Translator Bot] Please select a language / 請選擇語言",
-                        "contents": flex
-                    }])
-                    mark_card_sent(group_id)
-                    logging.info(f"[join] card sent to new group {group_id}")
-
-                    # === AUTO-BIND-ON-JOIN ===
-                    try:
-                        cur.execute(
-                            "SELECT plan_type, max_groups, expires_at FROM user_plans WHERE user_id=%s",
-                            (user_id,)
-                        )
-                        up = cur.fetchone()
-                        if up:
-                            plan_type, max_groups, expires_at = up
-                            quota = PLANS[plan_type]["quota"]
-                            bind_group_tx(user_id, group_id, plan_type, quota, expires_at)
-                            logging.info(f"[auto-bind-on-join] group={group_id} auto-bound for user={user_id}")
-                    except Exception as e:
-                        logging.error(f"[auto-bind-on-join] failed: {e}")
-                        conn.rollback()
-
-                else:
-                    logging.info(f"[join] group {group_id} already has card, skip sending")
-
-            except Exception as e:
-                logging.error(f"[join] failed for group={group_id}: {e}")
-                conn.rollback()
-            continue  # join 事件处理完毕后跳过后续逻辑
-
-        # ==================== 成员变化时 ====================
-        if etype in ("memberJoined", "memberLeft"):
-            try:
-                if group_id and not has_sent_card(group_id):
-                    flex = build_language_selection_flex()
-                    send_reply_message(reply_token, [{
-                        "type": "flex",
-                        "altText": "[Translator Bot] Please select a language / 請選擇語言",
-                        "contents": flex
-                    }])
-                    mark_card_sent(group_id)
-                    logging.info(f"[auto-card] sent once to group {group_id} on member event {etype}")
-                else:
-                    logging.info(f"[auto-card] group {group_id} already has card, skip sending on {etype}")
-            except Exception as e:
-                logging.error(f"[auto-card] failed for group={group_id}: {e}")
-                conn.rollback()
+        # 保护：没有基础信息的事件直接跳过
+        if not user_id or not reply_token:
             continue
 
-       
-       # B) 文本消息
-        if etype == "message" and (event.get("message", {}) or {}).get("type") == "text":
-            text = (event.get("message", {}) or {}).get("text") or ""
+        logging.info(f"[PROD-LOG] Processing user={user_id} etype={etype}")
 
-            # B1) 重置 (清空该群所有人的语言设定，让大家重新点击卡片选择)
+        # ==========================================================
+        # 🔥【上线前第一道岗：到期拦截与清空】
+        # 这里解决了你“拦截不出现”的所有痛点
+        # ==========================================================
+        try:
+            cur.execute("SELECT expires_at, plan_type FROM user_plans WHERE user_id=%s", (user_id,))
+            p_data = cur.fetchone()
+            
+            is_expired = False
+            # ✅ ADMIN 强制过期测试分支
+            if user_id in ADMIN_FORCE_EXPIRED_USERS:
+                is_expired = True
+                p_data = ("1970-01-01", "Starter") # 模拟过期数据
+            # ✅ 正常逻辑判断：今天 > 到期日期 且 不是免费版
+            elif p_data and p_data[0] and p_data[1] != 'Free':
+                import datetime
+                today = datetime.datetime.now().strftime("%Y-%m-%d")
+                exp_date = p_data[0][:10] # 截取前10位保证日期格式兼容性
+                if today > exp_date:
+                    is_expired = True
+
+            if is_expired:
+                # 执行大清空：清理权限名额、偏好设置，并将状态打回 Free
+                cur.execute("DELETE FROM group_bindings WHERE owner_id=%s", (user_id,))
+                cur.execute("DELETE FROM user_prefs WHERE user_id=%s", (user_id,))
+                cur.execute("UPDATE user_plans SET plan_type='Free', max_groups=0, expires_at=NULL WHERE user_id=%s", (user_id,))
+                conn.commit()
+                
+                # 双重提示：Push（告知清理） + Reply（告知购买）
+                send_push_text(user_id, "⚠️ 套餐已過期，所有綁定名額已釋放，設定已重置。\nYour plan has expired and all settings were cleared.")
+                buy_url = build_buy_link(user_id, group_id)
+                send_reply_message(reply_token, [{"type": "text", "text": f"⚠️ 您的套餐已過期，請重新購買：\n🛒 {buy_url}"}])
+                continue # 👈 强制终止，此用户后续任何指令或翻译都不会触发
+        except Exception as e:
+            logging.error(f"Guard Logic Crash: {e}")
+            conn.rollback()
+
+        # ==========================================================
+        # 3. 功能逻辑区（仅限活跃用户）
+        # ==========================================================
+
+        # A0) 初始化免费额度逻辑
+        try:
+            cur.execute("""
+                INSERT INTO users (user_id, free_remaining) VALUES (%s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET free_remaining = EXCLUDED.free_remaining
+                WHERE users.free_remaining IS NULL OR users.free_remaining = 0
+            """, (user_id, PLANS['Free']['quota']))
+            conn.commit()
+        except Exception as e:
+            logging.error(f"Quota init failed: {e}")
+            conn.rollback()
+
+        # A1) 自动发卡逻辑（加入群组或成员变动）
+        if etype in ("join", "memberJoined", "memberLeft"):
+            if group_id and not has_sent_card(group_id):
+                flex = build_language_selection_flex()
+                send_reply_message(reply_token, [{"type": "flex", "altText": "[Saygo] Please select language", "contents": flex}])
+                mark_card_sent(group_id)
+                # 尝试自动绑定（仅限 Join）
+                if etype == "join":
+                    try:
+                        cur.execute("SELECT plan_type, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
+                        up = cur.fetchone()
+                        if up and up[1]: 
+                            bind_group_tx(user_id, group_id, up[0], PLANS[up[0]]["quota"], up[1])
+                    except: conn.rollback()
+            continue
+
+        # B) 消息解析区
+        if etype == "message" and event.get("message", {}).get("type") == "text":
+            text = event.get("message", {}).get("text") or ""
+            
+            # B1) 重置指令处理
             if is_reset_command(text):
                 try:
                     cur.execute("DELETE FROM user_prefs WHERE group_id=%s", (group_id,))
                     conn.commit()
-                except Exception as e:
-                    logging.error(f"[reset command] {e}")
-                    conn.rollback()
-                flex = build_language_selection_flex()
-                send_reply_message(reply_token, [{
-                    "type": "flex",
-                    "altText": "[Translator Bot] Please select a language / 請選擇語言",
-                    "contents": flex
-                }])
+                    send_reply_message(reply_token, [{"type": "flex", "altText": "Please select language", "contents": build_language_selection_flex()}])
+                except: conn.rollback()
                 continue
 
-            # B1.5) /unbind 解除群绑定
+            # B2) 解绑与绑定指令处理
             if text.strip().lower() == "/unbind" and group_id:
                 try:
                     cur.execute("DELETE FROM group_bindings WHERE group_id=%s AND owner_id=%s", (group_id, user_id))
                     cur.execute("DELETE FROM groups WHERE group_id=%s", (group_id,))
                     conn.commit()
-                    send_reply_message(reply_token, [{"type":"text","text":"✅ 已解除綁定，本群將使用個人免費額度。"}])
-                except Exception as e:
-                    conn.rollback()
-                    logging.error(f"[unbind] {e}")
-                    send_reply_message(reply_token, [{"type":"text","text":"❌ 解除綁定失敗，請稍後再試。"}])
+                    send_reply_message(reply_token, [{"type":"text","text":"✅ 已成功解除綁定。"}])
+                except: conn.rollback()
                 continue
 
-            # B1.6) /bind 绑定新群
             if text.strip().lower() == "/bind" and group_id:
                 try:
                     cur.execute("SELECT plan_type, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
                     row = cur.fetchone()
                     if not row:
-                        send_reply_message(reply_token, [{"type": "text", "text": "⚠️ 你尚未购买套餐。"}])
-                        return "OK"
-
-                    plan_name, expires_at = row
-                    quota = PLANS[plan_name]["quota"]
-                    status = bind_group_tx(user_id, group_id, plan_name, quota, expires_at)
-
-                    if status == "ok":
-                        send_reply_message(reply_token, [{"type": "text", "text": f"✅ 已绑定本群 {group_id}（{plan_name}）"}])
-                    elif status == "limit":
-                        send_reply_message(reply_token, [{"type": "text", "text": f"⚠️ 已达群组上限（{PLANS[plan_name]['max_groups']}）。请在旧群 /unbind 后再试。"}])
-                    elif status == "bound_elsewhere":
-                        send_reply_message(reply_token, [{"type": "text", "text": f"⚠️ 群 {group_id} 已被其他账号绑定。"}])
+                        send_reply_message(reply_token, [{"type": "text", "text": "⚠️ 您目前沒有付費套餐。"}] )
                     else:
-                        send_reply_message(reply_token, [{"type": "text", "text": "⚠️ 绑定失败，请稍后再试。"}])
-                except Exception as e: 
-                    logging.error(f"[bind command] {e}")
-                    conn.rollback()
-                    send_reply_message(reply_token, [{"type": "text", "text": "⚠️ 系统异常，请稍后重试。"}])
-                return "OK"
-
-            # B2) 语言按钮逻辑（修改点：支持多语言累加模式）
-            LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
-            tnorm = text.strip().lower()
-            if tnorm in LANG_CODES:
-                lang_code = tnorm
-                try:
-                    # ✅ 不删除旧语言，直接插入新语言，如果已存在则跳过
-                    cur.execute("""
-                        INSERT INTO user_prefs (user_id, group_id, target_lang)
-                        VALUES (%s, %s, %s)
-                        ON CONFLICT (user_id, group_id, target_lang) DO NOTHING
-                    """, (user_id, group_id, lang_code))
-                    conn.commit()
-                    
-                    # 获取当前已选的所有语言用于提示
-                    cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
-                    current_langs = [r[0].upper() for r in cur.fetchall()]
-                    
-                    # 【静默尝试绑定逻辑保持不变】
-                    cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=%s", (user_id,))
-                    row = cur.fetchone()
-                    if row:
-                        plan_type, max_groups = row
-                        cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
-                        used = cur.fetchone()[0] or 0
-                        cur.execute("SELECT owner_id FROM group_bindings WHERE group_id=%s", (group_id,))
-                        exists = cur.fetchone()
-                        if (not exists) and ((max_groups is None) or (used < max_groups)):
-                            cur.execute("INSERT INTO group_bindings (group_id, owner_id) VALUES (%s, %s)", (group_id, user_id))
-                            conn.commit()
-
-                    send_reply_message(reply_token, [{"type": "text", "text": f"✅ Language set to: {' + '.join(current_langs)}"}])
-                    continue
-                except Exception as e:
-                    logging.error(f"[lang set] {e}")
-                    conn.rollback()
-                    continue
-
-            # B3) 非群聊不翻译
-            if not group_id:
+                        status = bind_group_tx(user_id, group_id, row[0], PLANS[row[0]]["quota"], row[1])
+                        msg = "✅ 本群已成功綁定" if status == "ok" else "⚠️ 綁定失敗：名額已滿或已被占用。"
+                        send_reply_message(reply_token, [{"type": "text", "text": msg}])
+                except: conn.rollback()
                 continue
 
-            # ===== B3.5) 授权/名额门禁 =====
-            try:
-                cur.execute("""
-                    SELECT plan_type, plan_owner, plan_remaining, expires_at
-                    FROM groups
-                    WHERE group_id=%s
-                """, (group_id,))
-                g = cur.fetchone()
-                if not g:
-                    cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=%s", (user_id,))
-                    up = cur.fetchone()
-                    if up:
-                        plan_type, max_groups = up
-                        cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
-                        used = (cur.fetchone() or [0])[0] or 0
-                        if (max_groups is not None) and (used >= max_groups):
-                            buy_url = build_buy_link(user_id, group_id)
-                            msg = (
-                                f"⚠️ 你的 {plan_type} 套餐最多可綁定 {max_groups} 個群組。\n"
-                                f"本群尚未授權，已暫停翻譯。\n\n"
-                                f"👉 在已綁定的舊群輸入 /unbind 可釋放名額；\n"
-                                f"👉 或升級套餐以增加可綁定群數：\n{buy_url}"
-                            )
-                            send_reply_message(reply_token, [{"type": "text", "text": msg[:4900]}])
-                            continue 
-            except Exception as e:
-                logging.error(f"[bind gate] {e}")
+            # B3) 语言选择按钮点击处理
+            LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
+            if text.strip().lower() in LANG_CODES:
+                target = text.strip().lower()
+                try:
+                    cur.execute("INSERT INTO user_prefs (user_id, group_id, target_lang) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (user_id, group_id, target))
+                    conn.commit()
+                    cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
+                    all_langs = [r[0].upper() for r in cur.fetchall()]
+                    
+                    # 静默尝试自动开启该群权限（只要用户有名额）
+                    cur.execute("SELECT plan_type, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
+                    p_info = cur.fetchone()
+                    if p_info: bind_group_tx(user_id, group_id, p_info[0], PLANS[p_info[0]]["quota"], p_info[1])
 
-            # B4) 收集语言
+                    send_reply_message(reply_token, [{"type": "text", "text": f"✅ 已添加目標語言: {' + '.join(all_langs)}"}])
+                except: conn.rollback()
+                continue
+
+            # ==========================================================
+            # 4. 核心翻译与扣费逻辑区
+            # ==========================================================
+            if not group_id: continue # 非群聊不进行自动翻译
+
+            # 第一步：翻译授权门禁（没有绑定该群且名额已满则拦截）
+            cur.execute("SELECT 1 FROM groups WHERE group_id=%s", (group_id,))
+            if not cur.fetchone():
+                cur.execute("SELECT plan_type, max_groups FROM user_plans WHERE user_id=%s", (user_id,))
+                up = cur.fetchone()
+                if up and (PLANS[up[0]]["max_groups"] or 0) > 0:
+                    cur.execute("SELECT COUNT(*) FROM group_bindings WHERE owner_id=%s", (user_id,))
+                    if (cur.fetchone()[0] or 0) >= PLANS[up[0]]["max_groups"]:
+                        buy_url = build_buy_link(user_id, group_id)
+                        send_reply_message(reply_token, [{"type": "text", "text": f"⚠️ 您的套餐名額已滿，本群未授權。{buy_url}"}])
+                        continue
+
+            # 第二步：获取语言设定
             cur.execute("SELECT target_lang FROM user_prefs WHERE group_id=%s AND user_id=%s", (group_id, user_id))
-            configured = [row[0].lower() for row in cur.fetchall() if row and row[0]]
-            configured = list(dict.fromkeys(configured))
-            if not configured:
-                tip = "Type /re to open the language card"
-
-                send_reply_message(reply_token, [{"type": "text", "text": tip}])
+            targets = [r[0].lower() for r in cur.fetchall() if r and r[0]]
+            if not targets:
+                send_reply_message(reply_token, [{"type": "text", "text": "Type /re to select language"}])
                 continue
 
             src_hint = guess_source_lang(text)
-            targets = [tl for tl in configured if (not src_hint or tl != src_hint)]
-            if not targets:
-                continue
+            actual_targets = [t for t in targets if t != src_hint]
+            if not actual_targets: continue
 
-            profile = get_user_profile_cached(user_id, group_id) or {}
-            icon = profile.get("pictureUrl") or BOT_AVATAR_FALLBACK
-            display_name = (profile.get("displayName") or "User")[:20]
-
-            # B5) 翻译
-            t0 = time.perf_counter()
+            # 第三步：执行并行翻译
             translations = []
-            if len(targets) == 1:
-                tl = targets[0]
-                r = translate_text(text, tl, src_hint)
-                if r:
-                    txt = r[0] if isinstance(r, tuple) else r
-                    translations.append((tl, txt))
-            else:
-                with ThreadPoolExecutor(max_workers=min(6, len(targets))) as pool:
-                    futs = {tl: pool.submit(translate_text, text, tl, src_hint) for tl in targets}
-                    for tl, fut in futs.items():
-                        r = fut.result()
-                        if r:
-                            txt = r[0] if isinstance(r, tuple) else r
-                            translations.append((tl, txt))
-            logging.info(f"[translate] langs={len(targets)} elapsed_ms={(time.perf_counter()-t0)*1000:.1f}")
+            with ThreadPoolExecutor(max_workers=5) as pool:
+                futs = {t: pool.submit(translate_text, text, t, src_hint) for t in actual_targets}
+                for t, f in futs.items():
+                    res = f.result()
+                    if res: translations.append((t, res[0] if isinstance(res, tuple) else res))
 
-            # B6) 扣费 + 中止逻辑
-            chars_used = len(text) * max(1, len(translations))
-            cur.execute("SELECT plan_type, plan_remaining, plan_owner, expires_at FROM groups WHERE group_id=%s", (group_id,))
-            group_plan = cur.fetchone()
-
+            # 第四步：额度扣费系统
+            chars = len(text) * len(translations)
+            cur.execute("SELECT plan_remaining, expires_at FROM groups WHERE group_id=%s", (group_id,))
+            gp = cur.fetchone()
+            
             used_paid = False
-            if group_plan:
-                plan_type, plan_remaining, plan_owner, expires_at = group_plan
-                expired = False
-                if expires_at:
+            if gp:
+                rem, exp = gp
+                is_gp_exp = False
+                if exp:
                     import datetime
-                    try:
-                        expired = datetime.datetime.utcnow() > datetime.datetime.fromisoformat(expires_at)
-                    except Exception as e:
-                        logging.warning(f"expires_at parse failed: {e}")
-
-                if not expired:
-                    if atomic_deduct_group_quota(group_id, chars_used):
-                        used_paid = True
-
-                if not used_paid and expired:
-                    buy_url = build_buy_link(user_id, group_id)
-                    msg = (f"⚠️ 群套餐已到期，請重新購買\n⚠️ Group plan expired. Please renew here:\n{buy_url}")
-                    send_reply_message(reply_token, [{"type": "text", "text": msg}])
-                    continue
-
-                elif not used_paid and plan_remaining is not None and plan_remaining < chars_used:
-                    buy_url = build_buy_link(user_id, group_id)
-                    msg = (f"⚠️ 本群翻譯額度不足。\n⚠️ Your group quota is not enough. Please purchase more here:\n{buy_url}")   
-                    send_reply_message(reply_token, [{"type": "text", "text": msg}])
+                    # 再次强调日期比较的鲁棒性
+                    is_gp_exp = datetime.datetime.now().strftime("%Y-%m-%d") > exp[:10]
+                
+                if not is_gp_exp and atomic_deduct_group_quota(group_id, chars):
+                    used_paid = True
+                elif is_gp_exp:
+                    # 群套餐到期提示
+                    send_reply_message(reply_token, [{"type": "text", "text": f"⚠️ 群套餐已到期，翻譯暫停。\n🛒 {build_buy_link(user_id, group_id)}"}])
                     continue
 
             if not used_paid:
-                ok, _remain = atomic_deduct_user_free_quota(user_id, chars_used)
+                # 尝试扣除个人免费额度
+                ok, _ = atomic_deduct_user_free_quota(user_id, chars)
                 if not ok:
-                    buy_url = build_buy_link(user_id, group_id)
-                    msg = f"Your free quota is used up. Please purchase a plan here:\n{buy_url}"
-                    send_reply_message(reply_token, [{"type": "text", "text": msg}])
+                    send_reply_message(reply_token, [{"type": "text", "text": f"⚠️ 額度不足 (No Quota)。\n🛒 {build_buy_link(user_id, group_id)}"}])
                     continue
 
-            # B7) 发送翻译结果 (会自动按照 targets 顺序排列发送)
-            sender_icon = icon if ALWAYS_USER_AVATAR else BOT_AVATAR_FALLBACK
-            messages = []
-            for lang_code, txt in translations:
-                messages.append({
-                    "type": "text",
-                    "text": txt,
-                    "sender": {"name": f"{display_name} ({lang_code})"[:20], "iconUrl": sender_icon}
+            # 第五步：结果推送（带 Sender 伪装）
+            profile = get_user_profile_cached(user_id, group_id)
+            d_name = (profile.get("displayName") or "User")[:20]
+            icon = profile.get("pictureUrl") or BOT_AVATAR_FALLBACK
+            msgs = []
+            for lang, txt in translations:
+                msgs.append({
+                    "type": "text", 
+                    "text": txt, 
+                    "sender": {"name": f"{d_name} ({lang})", "iconUrl": icon}
                 })
-            if messages:
-                send_reply_message(reply_token, messages[:5])
+            # LINE 限制单次回复最多 5 条消息
+            if msgs: send_reply_message(reply_token, msgs[:5])
 
     return "OK"
 # ===================== Group Binding Logic (通用群组绑定逻辑) =====================
