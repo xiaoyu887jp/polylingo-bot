@@ -795,7 +795,14 @@ def line_webhook():
                     
                     # 发送告警通知
                     send_push_text(_uid, "⚠️ 套餐已過期，系統已自動解除所有群組綁定並清空設定。\nPlan expired. All settings cleared.")
-                    return "OK" # 拦截，不执行后续翻译
+                    # 4️⃣ 当前请求立即拦截（这是你刚指出缺失的那一段）
+                    send_reply_message(reply_token, [{
+                        "type": "text",
+                        "text": "Your plan has expired.\nPlease purchase again to continue."
+                    }])
+
+                    return "OK"  # ⛔ 终止本次 webhook，不进入翻译
+
     except Exception as e:
         logging.error(f"Critical Expiry Check Error: {e}")
         conn.rollback()
