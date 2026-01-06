@@ -19,10 +19,6 @@ from urllib3.util.retry import Retry
 from concurrent.futures import ThreadPoolExecutor
 from linebot import LineBotApi  # 仅为兼容保留，不直接使用
 
-# ===== ADMIN 测试用：强制到期用户 =====
-ADMIN_FORCE_EXPIRED_USERS = {
-    "Uc572e694c326e9704bba84458b0d2729"
-}
 
 # ===== Stripe Plan Definitions =====
 PRICE_TO_PLAN = {
@@ -795,12 +791,10 @@ def line_webhook():
             p_data = cur.fetchone()
             
             is_expired = False
-            # ✅ ADMIN 强制过期测试分支
-            if user_id in ADMIN_FORCE_EXPIRED_USERS:
-                is_expired = True
-                p_data = ("1970-01-01", "Starter") # 模拟过期数据
+            
             # ✅ 正常逻辑判断：今天 > 到期日期 且 不是免费版
-            elif p_data and p_data[0] and p_data[1] != 'Free':
+            # 👇 注意：这里必须用 if，不能用 elif
+            if p_data and p_data[0] and p_data[1] != 'Free':
                 import datetime
                 today = datetime.datetime.now().strftime("%Y-%m-%d")
                 exp_date = p_data[0][:10] # 截取前10位保证日期格式兼容性
