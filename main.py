@@ -833,22 +833,22 @@ def line_webhook():
             logging.error(f"Quota init failed: {e}")
             conn.rollback()
 
-        # A1) 自动发卡逻辑（加入群组或成员变动）
-        if etype in ("join", "memberJoined", "memberLeft"):
-            if group_id:
-                flex = build_language_selection_flex()
-                send_reply_message(reply_token, [{"type": "flex", "altText": "[Saygo] Please select language", "contents": flex}])
-                mark_card_sent(group_id)
-                # 尝试自动绑定（仅限 Join）
-                if etype == "join":
-                    try:
-                        cur.execute("SELECT plan_type, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
-                        up = cur.fetchone()
-                        if up and up[1]: 
-                            bind_group_tx(user_id, group_id, up[0], PLANS[up[0]]["quota"], up[1])
-                    except: conn.rollback()
+        # A1) 进群自动化逻辑：立即发卡 + 自动绑定名额
+        if etype == "join":
+            # 第一步：立即弹出语言选择卡片
+            flex = build_language_selection_flex()
+            send_reply_message(reply_token, [{"type": "flex", "altText": "Welcome! Please select language", "contents": flex}])
+            mark_card_sent(group_id)
+            # 第二步：自动占名额（核心：只要您有套餐，拉进群就自动关联，不用输指令）
+            try:
+                cur.execute("SELECT plan_type, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
+                up = cur.fetchone()
+                if up and up[1]:
+                    bind_group_tx(user_id, group_id, up[0], PLANS[up[0]]["quota"], up[1])
+            except:
+                conn.rollback()
             continue
-
+             
         # B) 消息解析区
         if etype == "message" and event.get("message", {}).get("type") == "text":
             text = event.get("message", {}).get("text") or ""
@@ -890,8 +890,8 @@ def line_webhook():
             if text.strip().lower() in LANG_CODES:
                 target = text.strip().lower()
                 try:
-                    cur.execute("DELETE FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
-                    cur.execute("INSERT INTO user_prefs (user_id, group_id, target_lang) VALUES (%s, %s, %s)", (user_id, group_id, target))
+                    
+                    cur.execute("INSERT INTO user_prefs (user_id, group_id, target_lang) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (user_id, group_id, target))
                     conn.commit()
                     cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
                     all_langs = [r[0].upper() for r in cur.fetchall()]
