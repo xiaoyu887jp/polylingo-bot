@@ -768,13 +768,33 @@ def line_webhook():
     # 2. 解析事件流
     data = json.loads(body) if body else {}
     events = data.get("events", [])
-
+    
+    # --- 进群自动化：最高优先级，必须放在所有检查之前 ---
     for event in events:
         etype = event.get("type")
         source = event.get("source", {}) or {}
         user_id = source.get("userId")
         group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
+
+        # --- 这里就是您说的“正下方”，把这一段直接贴在这里 ---
+        if etype == "join":
+            # 1. 立即弹出语言选择卡片
+            flex = build_language_selection_flex()
+            send_reply_message(reply_token, [{"type": "flex", "altText": "Welcome!", "contents": flex}])
+            mark_card_sent(group_id)
+            # 2. 自动占名额（核心：只要您有套餐，拉进群就自动绑定）
+            if user_id:
+                try:
+                    cur.execute("SELECT plan_type, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
+                    up = cur.fetchone()
+                    if up and up[1]:
+                        bind_group_tx(user_id, group_id, up[0], PLANS[up[0]]["quota"], up[1])
+                except:
+                    conn.rollback()
+            continue # 这一行很重要，保证发完卡片就结束，不跑后面的代码
+
+        
 
         # 保护：没有基础信息的事件直接跳过
         if not user_id or not reply_token:
@@ -833,21 +853,6 @@ def line_webhook():
             logging.error(f"Quota init failed: {e}")
             conn.rollback()
 
-        # A1) 进群自动化逻辑：立即发卡 + 自动绑定名额
-        if etype == "join":
-            # 第一步：立即弹出语言选择卡片
-            flex = build_language_selection_flex()
-            send_reply_message(reply_token, [{"type": "flex", "altText": "Welcome! Please select language", "contents": flex}])
-            mark_card_sent(group_id)
-            # 第二步：自动占名额（核心：只要您有套餐，拉进群就自动关联，不用输指令）
-            try:
-                cur.execute("SELECT plan_type, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
-                up = cur.fetchone()
-                if up and up[1]:
-                    bind_group_tx(user_id, group_id, up[0], PLANS[up[0]]["quota"], up[1])
-            except:
-                conn.rollback()
-            continue
              
         # B) 消息解析区
         if etype == "message" and event.get("message", {}).get("type") == "text":
