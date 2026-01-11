@@ -835,7 +835,7 @@ def line_webhook():
 
         # A1) 自动发卡逻辑（加入群组或成员变动）
         if etype in ("join", "memberJoined", "memberLeft"):
-            if group_id 
+            if group_id:
                 flex = build_language_selection_flex()
                 send_reply_message(reply_token, [{"type": "flex", "altText": "[Saygo] Please select language", "contents": flex}])
                 mark_card_sent(group_id)
