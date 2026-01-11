@@ -835,7 +835,7 @@ def line_webhook():
 
         # A1) 自动发卡逻辑（加入群组或成员变动）
         if etype in ("join", "memberJoined", "memberLeft"):
-            if group_id and not has_sent_card(group_id):
+            if group_id 
                 flex = build_language_selection_flex()
                 send_reply_message(reply_token, [{"type": "flex", "altText": "[Saygo] Please select language", "contents": flex}])
                 mark_card_sent(group_id)
@@ -890,7 +890,8 @@ def line_webhook():
             if text.strip().lower() in LANG_CODES:
                 target = text.strip().lower()
                 try:
-                    cur.execute("INSERT INTO user_prefs (user_id, group_id, target_lang) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (user_id, group_id, target))
+                    cur.execute("DELETE FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
+                    cur.execute("INSERT INTO user_prefs (user_id, group_id, target_lang) VALUES (%s, %s, %s)", (user_id, group_id, target))
                     conn.commit()
                     cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
                     all_langs = [r[0].upper() for r in cur.fetchall()]
