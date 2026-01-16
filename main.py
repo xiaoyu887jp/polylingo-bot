@@ -861,7 +861,7 @@ def line_webhook():
             # B1) 重置指令处理
             if is_reset_command(text):
                 try:
-                    cur.execute("DELETE FROM user_prefs WHERE group_id=%s", (group_id,))
+                    cur.execute("DELETE FROM user_prefs WHERE group_id=%s AND user_id=%s", (group_id, user_id))
                     conn.commit()
                     send_reply_message(reply_token, [{"type": "flex", "altText": "Please select language", "contents": build_language_selection_flex()}])
                 except: conn.rollback()
@@ -895,8 +895,8 @@ def line_webhook():
             if text.strip().lower() in LANG_CODES:
                 target = text.strip().lower()
                 try:
-                    
-                    cur.execute("INSERT INTO user_prefs (user_id, group_id, target_lang) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING", (user_id, group_id, target))
+                    cur.execute("DELETE FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
+                    cur.execute("INSERT INTO user_prefs (user_id, group_id, target_lang) VALUES (%s, %s, %s)", (user_id, group_id, target))
                     conn.commit()
                     cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
                     all_langs = [r[0].upper() for r in cur.fetchall()]
