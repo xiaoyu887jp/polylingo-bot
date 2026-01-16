@@ -915,7 +915,7 @@ def line_webhook():
                     # 如果报错，打印出具体的错误，方便在 Render Logs 里看
                     logging.error(f"[CRITICAL] Lang update failed for {user_id}: {e}")
                     conn.rollback()
-               continue
+            continue
                         
                     
                   
