@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 import os
 import re
@@ -895,30 +896,22 @@ def line_webhook():
             if text.strip().lower() in LANG_CODES:
                 target = text.strip().lower()
                 try:
-                    # 1. 彻底清理旧记录 (关键：不管之前错成什么样，全部抹除)
                     cur.execute("DELETE FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
-                    # 2. 写入新记录
                     cur.execute("INSERT INTO user_prefs (user_id, group_id, target_lang) VALUES (%s, %s, %s)", (user_id, group_id, target))
-                    # 3. 立即强制提交（确保语言先存进去，防止被后面的逻辑回滚）
                     conn.commit()
-                    # 4. 获取最新列表用于反馈
                     cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
                     all_langs = [r[0].upper() for r in cur.fetchall()]
-                    # 5. 尝试静默激活权限 (如果他是新成员且名额够，这步帮他开通)
+                    
+                    # 静默尝试自动开启该群权限（只要用户有名额）
                     cur.execute("SELECT plan_type, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
                     p_info = cur.fetchone()
-                    if p_info:
-                        bind_group_tx(user_id, group_id, p_info[0], PLANS[p_info[0]]["quota"], p_info[1])
-                        # 再次强制提交权限绑定
-                    send_reply_message(reply_token, [{"type": "text", "text": f"✅ Language updated! Now translating to: {' + '.join(all_langs)}"}])
-                except Exception as e:
-                    # 如果报错，打印出具体的错误，方便在 Render Logs 里看
-                    logging.error(f"[CRITICAL] Lang update failed for {user_id}: {e}")
-                    conn.rollback()
-            continue
-                        
-                    
-                  
+                    if p_info: bind_group_tx(user_id, group_id, p_info[0], PLANS[p_info[0]]["quota"], p_info[1])
+
+                    send_reply_message(reply_token, [{"type": "text", "text": f"✅ Language set to: {' + '.join(all_langs)}"}])
+
+                except: conn.rollback()
+                continue
+
             # ==========================================================
             # 4. 核心翻译与扣费逻辑区
             # ==========================================================
