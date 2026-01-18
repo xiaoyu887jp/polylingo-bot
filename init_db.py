@@ -100,7 +100,23 @@ def create_groups_table():
     # 常用查询加索引（可选）
     cur.execute('CREATE INDEX IF NOT EXISTS idx_groups_owner ON groups(plan_owner)')
     conn.commit(); conn.close()
-
+    
+# 专门为语言选择增加“唯一约束”，防止点错不翻译
+def fix_user_prefs_table():
+    conn = sqlite3.connect(DATABASE)
+    cur = conn.cursor()
+    # 1. 先创建表（如果不存在）
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS user_prefs (
+            user_id TEXT,
+            group_id TEXT,
+            target_lang TEXT,
+            PRIMARY KEY (user_id, group_id)
+        )
+    ''')
+    conn.commit(); conn.close()
+    print("✅ user_prefs 表已设置唯一约束。")
+    
 if __name__ == "__main__":
     create_user_quota_table()
     create_group_settings_table()
@@ -109,4 +125,5 @@ if __name__ == "__main__":
     create_user_plans_table()      # Webhook 依赖
     create_group_bindings_table()  # Webhook/绑定检查依赖
     create_groups_table()          # 含 expires_at
+    fix_user_prefs_table()
     print("✅ 所有数据表已创建或已存在。")
