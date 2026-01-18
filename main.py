@@ -896,14 +896,9 @@ def line_webhook():
             if text.strip().lower() in LANG_CODES:
                 target = text.strip().lower()
                 try:
-                    cur.execute("""
-                        INSERT INTO user_prefs (user_id, group_id, target_lang)
-                        VALUES (%s, %s, %s)
-                        ON CONFLICT (user_id, group_id)
-                        DO UPDATE SET target_lang = EXCLUDED.target_lang
-                    """, (user_id, group_id, target))
+                    cur.execute("DELETE FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
+                    cur.execute("INSERT INTO user_prefs (user_id, group_id, target_lang) VALUES (%s, %s, %s)", (user_id, group_id, target))
                     conn.commit()
-                    # 后面这些逻辑保持你原本的样子
                     cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
                     all_langs = [r[0].upper() for r in cur.fetchall()]
                     
