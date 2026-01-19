@@ -811,12 +811,12 @@ def line_webhook():
                         "💰 方案與價格\n"
                         "免費體驗：每人 5,000 字\n"
                         "購買與升級：https://saygo-translator.carrd.co/"
-                     )
-                     send_reply_message(reply_token, [{
-                         "type": "text",
-                         "text": reply_text
+                      )
+                      send_reply_message(reply_token, [{
+                          "type": "text",
+                          "text": reply_text
                      }])
-                     continue
+                    continue
 
         # 保护：没有基础信息的事件直接跳过
         if not user_id or not reply_token:
