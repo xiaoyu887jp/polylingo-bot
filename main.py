@@ -914,24 +914,24 @@ def line_webhook():
                             INSERT INTO user_prefs (user_id, group_id, target_lang)
                             VALUES (%s, %s, %s)
                         """, (user_id, group_id, lang_code))
-                   conn.commit()
+                    conn.commit()
         
-                   # ④ 重新讀取當前所有已選語言
-                   cur.execute("""
-                       SELECT target_lang FROM user_prefs
-                       WHERE user_id=%s AND group_id=%s
-                   """, (user_id, group_id))
-                   langs = [r[0].upper() for r in cur.fetchall()]
+                    # ④ 重新讀取當前所有已選語言
+                    cur.execute("""
+                        SELECT target_lang FROM user_prefs
+                        WHERE user_id=%s AND group_id=%s
+                    """, (user_id, group_id))
+                    langs = [r[0].upper() for r in cur.fetchall()]
                    
-                   # 發送反饋訊息
-                   send_reply_message(
-                       reply_token,
-                       [{"type": "text", "text": f"✅ Language set to: {' + '.join(langs) if langs else 'None'}"}]
-                   )
-               except Exception as e:
-                   logging.error(f"[lang-toggle-error] {e}")
-                   conn.rollback()
-               continue
+                    # 發送反饋訊息
+                    send_reply_message(
+                        reply_token,
+                        [{"type": "text", "text": f"✅ Language set to: {' + '.join(langs) if langs else 'None'}"}]
+                    )
+                except Exception as e:
+                    logging.error(f"[lang-toggle-error] {e}")
+                    conn.rollback()
+                continue
             # ==========================================================
             # 4. 核心翻译与扣费逻辑区
             # ==========================================================
