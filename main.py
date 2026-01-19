@@ -751,25 +751,37 @@ def _ensure_tx_clean(force_reconnect=False):
             logging.info("[db] reconnected after exception")
         except Exception as e2:
             logging.error(f"[db-reconnect-failed] {e2}")
-
 @app.route("/callback", methods=["POST"])
 def line_webhook():
-    # 确保数据库事务状态清洁
-    _ensure_tx_clean(force_reconnect=True) 
-    
-    # 1. 安全验签（严格保持你的 HMAC-SHA256 逻辑）
+    # ===============================
+    # 0. 确保数据库事务状态干净
+    # ===============================
+    _ensure_tx_clean(force_reconnect=True)
+
+    # ===============================
+    # 1. LINE 安全验签（HMAC-SHA256）
+    # ===============================
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(as_text=True)
+
     if LINE_CHANNEL_SECRET:
-        digest = hmac.new(LINE_CHANNEL_SECRET.encode("utf-8"), body.encode("utf-8"), hashlib.sha256).digest()
+        digest = hmac.new(
+            LINE_CHANNEL_SECRET.encode("utf-8"),
+            body.encode("utf-8"),
+            hashlib.sha256
+        ).digest()
         if signature != base64.b64encode(digest).decode("utf-8"):
             abort(400)
 
-    # 2. 解析事件流
+    # ===============================
+    # 2. 解析事件
+    # ===============================
     data = json.loads(body) if body else {}
     events = data.get("events", [])
-    
-    # --- 进群自动化：最高优先级，必须放在所有检查之前 ---
+
+    # ===============================
+    # 3. 逐条处理事件
+    # ===============================
     for event in events:
         etype = event.get("type")
         source = event.get("source", {}) or {}
@@ -777,50 +789,74 @@ def line_webhook():
         group_id = source.get("groupId") or source.get("roomId")
         reply_token = event.get("replyToken")
 
-        # --- 这里就是您说的“正下方”，把这一段直接贴在这里 ---
+        # ===========================
+        # A. 进群事件（最高优先级）
+        # ===========================
         if etype == "join":
-            # 1. 立即弹出语言选择卡片
             flex = build_language_selection_flex()
-            send_reply_message(reply_token, [{"type": "flex", "altText": "Welcome!", "contents": flex}])
-            mark_card_sent(group_id)
-            # 2. 自动占名额（核心：只要您有套餐，拉进群就自动绑定）
+            send_reply_message(reply_token, [{
+                "type": "flex",
+                "altText": "Welcome!",
+                "contents": flex
+            }])
+
+            if group_id:
+                mark_card_sent(group_id)
+
             if user_id:
                 try:
-                    cur.execute("SELECT plan_type, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
+                    cur.execute(
+                        "SELECT plan_type, expires_at FROM user_plans WHERE user_id=%s",
+                        (user_id,)
+                    )
                     up = cur.fetchone()
                     if up and up[1]:
-                        bind_group_tx(user_id, group_id, up[0], PLANS[up[0]]["quota"], up[1])
-                except:
+                        bind_group_tx(
+                            user_id,
+                            group_id,
+                            up[0],
+                            PLANS[up[0]]["quota"],
+                            up[1]
+                        )
+                except Exception:
                     conn.rollback()
-            continue # 这一行很重要，保证发完卡片就结束，不跑后面的代码
-            
-            if etype == "message":
-                message = event.get("message", {})
-                if message.get("type") != "text":
-                    continue
-            
-                text = message.get("text", "").strip()
 
-                if text == "/help":
-                    reply_text = (
-                        "📖 使用說明\n\n"
-                        "1️⃣ 將我加入 LINE 群組即可開始自動翻譯\n"
-                        "2️⃣ 請選擇要輸出的語言（可同時選擇多種）\n"
-                        "3️⃣ 設定完成後，群組內訊息會自動翻譯\n"
-                        "4️⃣ 如需重新設定，請點擊 Reset\n\n"
-                        "💰 方案與價格\n"
-                        "免費體驗：每人 5,000 字\n"
-                        "購買與升級：https://saygo-translator.carrd.co/"
-                      )
-                      send_reply_message(reply_token, [{
-                          "type": "text",
-                          "text": reply_text
-                     }])
-                    continue
+            continue  # ⛔ join 事件到此为止
 
-        # 保护：没有基础信息的事件直接跳过
-        if not user_id or not reply_token:
+        # ===========================
+        # B. 普通文字消息
+        # ===========================
+        if etype != "message":
             continue
+
+        message = event.get("message", {})
+        if message.get("type") != "text":
+            continue
+
+        text = message.get("text", "").strip()
+
+        # ===========================
+        # /help 指令
+        # ===========================
+        if text == "/help":
+            reply_text = (
+                "📖 使用說明\n\n"
+                "1️⃣ 將我加入 LINE 群組即可開始自動翻譯\n"
+                "2️⃣ 請選擇要輸出的語言（可同時選擇多種）\n"
+                "3️⃣ 設定完成後，群組內訊息會自動翻譯\n"
+                "4️⃣ 如需重新設定，請點擊 Reset\n\n"
+                "💰 方案與價格\n"
+                "免費體驗：每人 5,000 字\n"
+                "購買與升級：https://saygo-translator.carrd.co/"
+            )
+
+            send_reply_message(reply_token, [{
+                "type": "text",
+                "text": reply_text
+            }])
+            continue
+
+
 
         logging.info(f"[PROD-LOG] Processing user={user_id} etype={etype}")
 
