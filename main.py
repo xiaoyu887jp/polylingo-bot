@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 import os
 import re
@@ -794,8 +793,30 @@ def line_webhook():
                 except:
                     conn.rollback()
             continue # 这一行很重要，保证发完卡片就结束，不跑后面的代码
+            
+            if etype == "message":
+                message = event.get("message", {})
+                if message.get("type") != "text":
+                    continue
+            
+                text = message.get("text", "").strip()
 
-        
+                if text == "/help":
+                    reply_text = (
+                        "📖 使用說明\n\n"
+                        "1️⃣ 將我加入 LINE 群組即可開始自動翻譯\n"
+                        "2️⃣ 請選擇要輸出的語言（可同時選擇多種）\n"
+                        "3️⃣ 設定完成後，群組內訊息會自動翻譯\n"
+                        "4️⃣ 如需重新設定，請點擊 Reset\n\n"
+                        "💰 方案與價格\n"
+                        "免費體驗：每人 5,000 字\n"
+                        "購買與升級：https://saygo-translator.carrd.co/"
+                     )
+                     send_reply_message(reply_token, [{
+                         "type": "text",
+                         "text": reply_text
+                     }])
+                     continue
 
         # 保护：没有基础信息的事件直接跳过
         if not user_id or not reply_token:
