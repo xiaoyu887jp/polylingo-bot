@@ -891,27 +891,47 @@ def line_webhook():
                 except: conn.rollback()
                 continue
 
-            # B3) 语言选择按钮点击处理
+            # B3) 語言選擇按鈕點擊處理（修正版：支持多語言累加/取消）
             LANG_CODES = {"en","zh-cn","zh-tw","ja","ko","th","vi","fr","es","de","id","hi","it","pt","ru","ar"}
             if text.strip().lower() in LANG_CODES:
-                target = text.strip().lower()
+                lang_code = text.strip().lower()
                 try:
-                    cur.execute("DELETE FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
-                    cur.execute("INSERT INTO user_prefs (user_id, group_id, target_lang) VALUES (%s, %s, %s)", (user_id, group_id, target))
-                    conn.commit()
-                    cur.execute("SELECT target_lang FROM user_prefs WHERE user_id=%s AND group_id=%s", (user_id, group_id))
-                    all_langs = [r[0].upper() for r in cur.fetchall()]
-                    
-                    # 静默尝试自动开启该群权限（只要用户有名额）
-                    cur.execute("SELECT plan_type, expires_at FROM user_plans WHERE user_id=%s", (user_id,))
-                    p_info = cur.fetchone()
-                    if p_info: bind_group_tx(user_id, group_id, p_info[0], PLANS[p_info[0]]["quota"], p_info[1])
-
-                    send_reply_message(reply_token, [{"type": "text", "text": f"✅ Language set to: {' + '.join(all_langs)}"}])
-
-                except: conn.rollback()
-                continue
-
+                    # ① 先檢查這個語言是否已經存在
+                    cur.execute("""
+                        SELECT 1 FROM user_prefs
+                        WHERE user_id=%s AND group_id=%s AND target_lang=%s
+                    """, (user_id, group_id, lang_code))
+                    exists = cur.fetchone()
+                   
+                    if exists:
+                        cur.execute("""
+                            DELETE FROM user_prefs
+                            WHERE user_id=%s AND group_id=%s AND target_lang=%s
+                    """, (user_id, group_id, lang_code))
+                    else:
+                        # ③ 不存在 -> 加入這個語言
+                        cur.execute("""
+                            INSERT INTO user_prefs (user_id, group_id, target_lang)
+                            VALUES (%s, %s, %s)
+                        """, (user_id, group_id, lang_code))
+                   conn.commit()
+        
+                   # ④ 重新讀取當前所有已選語言
+                   cur.execute("""
+                       SELECT target_lang FROM user_prefs
+                       WHERE user_id=%s AND group_id=%s
+                   """, (user_id, group_id))
+                   langs = [r[0].upper() for r in cur.fetchall()]
+                   
+                   # 發送反饋訊息
+                   send_reply_message(
+                       reply_token,
+                       [{"type": "text", "text": f"✅ Language set to: {' + '.join(langs) if langs else 'None'}"}]
+                   )
+               except Exception as e:
+                   logging.error(f"[lang-toggle-error] {e}")
+                   conn.rollback()
+               continue
             # ==========================================================
             # 4. 核心翻译与扣费逻辑区
             # ==========================================================
